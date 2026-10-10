@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="A folded jacket with no stock yet">
+    <!-- Empty catalogue: a jacket on a hanger with nothing hanging in the rail.
+         Nepal flag palette: Crimson #DC143C, Blue #003893. -->
+    <defs>
+        <linearGradient id="railFade" gradientUnits="userSpaceOnUse" x1="96" y1="0" x2="416" y2="0">
+            <stop offset="0" stop-color="#003893" stop-opacity="0.05" />
+            <stop offset="0.5" stop-color="#003893" stop-opacity="0.22" />
+            <stop offset="1" stop-color="#003893" stop-opacity="0.05" />
+        </linearGradient>
+    </defs>
+
+    <!-- Hanging rail -->
+    <rect x="86" y="112" width="340" height="12" rx="6" fill="url(#railFade)" />
+    <circle cx="96" cy="118" r="9" fill="#003893" fill-opacity="0.28" />
+    <circle cx="416" cy="118" r="9" fill="#003893" fill-opacity="0.28" />
+
+    <!-- Hanger hook -->
+    <path d="M256 112 L256 92" stroke="#003893" stroke-width="9" stroke-linecap="round" stroke-opacity="0.5" />
+    <path d="M256 92 C 256 74 274 70 278 84" fill="none" stroke="#003893" stroke-width="9"
+        stroke-linecap="round" stroke-opacity="0.5" />
+
+    <!-- Hanger triangle -->
+    <path d="M256 116 L182 158 L330 158 Z" fill="none" stroke="#DC143C" stroke-width="9"
+        stroke-linejoin="round" stroke-opacity="0.45" />
+
+    <!-- Jacket silhouette, softly filled: present in spirit, absent in stock -->
+    <g stroke="#DC143C" stroke-width="9" stroke-linejoin="round" fill="#DC143C" fill-opacity="0.07">
+        <!-- Body -->
+        <path d="M206 160 L256 178 L306 160 L352 190 L336 250 L318 238 L318 424 Q256 442 194 424 L194 238 L176 250 L160 190 Z" />
+        <!-- Collar -->
+        <path d="M256 178 L232 158 L206 160 L256 200 Z" fill-opacity="0.13" />
+        <path d="M256 178 L280 158 L306 160 L256 200 Z" fill-opacity="0.13" />
+    </g>
+
+    <!-- Centre seam and pocket stitching -->
+    <path d="M256 200 L256 432" stroke="#DC143C" stroke-width="7" stroke-linecap="round" stroke-opacity="0.28" />
+    <path d="M212 300 L242 296" stroke="#DC143C" stroke-width="7" stroke-linecap="round" stroke-opacity="0.22" />
+    <path d="M270 296 L300 300" stroke="#DC143C" stroke-width="7" stroke-linecap="round" stroke-opacity="0.22" />
+
+    <!-- Dashed "out of stock" edge along the hem -->
+    <path d="M200 400 L312 400" stroke="#003893" stroke-width="7" stroke-linecap="round"
+        stroke-opacity="0.30" stroke-dasharray="4 16" />
+
+    <!-- Quiet sparkles: the rail is waiting for stock -->
+    <g fill="#003893" fill-opacity="0.28">
+        <path d="M96 300 L102 318 L120 324 L102 330 L96 348 L90 330 L72 324 L90 318 Z" />
+        <path d="M416 268 L421 282 L435 287 L421 292 L416 306 L411 292 L397 287 L411 282 Z" />
+    </g>
+</svg>

@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="An empty pack loot bag">
+    <!-- Empty basket / loot bag. Nepal flag palette: Crimson #DC143C, Blue #003893. -->
+    <defs>
+        <linearGradient id="bagBody" gradientUnits="userSpaceOnUse" x1="256" y1="150" x2="256" y2="470">
+            <stop offset="0" stop-color="#DC143C" stop-opacity="0.16" />
+            <stop offset="1" stop-color="#DC143C" stop-opacity="0.05" />
+        </linearGradient>
+    </defs>
+
+    <!-- Soft ground shadow -->
+    <ellipse cx="256" cy="462" rx="132" ry="18" fill="#003893" fill-opacity="0.10" />
+
+    <!-- Bag body: tapered satchel with a folded rim -->
+    <path d="M136 196 L376 196 L344 452 Q340 470 320 470 L192 470 Q172 470 168 452 Z"
+        fill="url(#bagBody)" stroke="#DC143C" stroke-width="9" stroke-linejoin="round" />
+    <!-- Left panel shading for depth -->
+    <path d="M136 196 L206 196 L214 470 L192 470 Q172 470 168 452 Z"
+        fill="#DC143C" fill-opacity="0.07" />
+
+    <!-- Crimped rim the drawstring gathers through -->
+    <path d="M124 176 L388 176 Q388 196 368 196 L144 196 Q124 196 124 176 Z"
+        fill="#DC143C" fill-opacity="0.14" stroke="#DC143C" stroke-width="9" stroke-linejoin="round" />
+    <!-- Gathered notches along the rim -->
+    <g stroke="#DC143C" stroke-width="7" stroke-linecap="round" stroke-opacity="0.55">
+        <path d="M170 176 L164 196" />
+        <path d="M214 176 L210 196" />
+        <path d="M298 176 L302 196" />
+        <path d="M342 176 L348 196" />
+    </g>
+
+    <!-- Drawstring loops -->
+    <path d="M256 176 C 226 140 168 140 150 172" fill="none" stroke="#003893" stroke-width="9"
+        stroke-linecap="round" stroke-opacity="0.75" />
+    <path d="M256 176 C 286 140 344 140 362 172" fill="none" stroke="#003893" stroke-width="9"
+        stroke-linecap="round" stroke-opacity="0.75" />
+    <!-- Cord tips -->
+    <circle cx="148" cy="176" r="11" fill="#003893" fill-opacity="0.75" />
+    <circle cx="364" cy="176" r="11" fill="#003893" fill-opacity="0.75" />
+
+    <!-- Paw print: the pack motif, embossed on the front -->
+    <g fill="#DC143C" fill-opacity="0.30">
+        <ellipse cx="256" cy="330" rx="46" ry="38" />
+        <ellipse cx="196" cy="286" rx="17" ry="21" transform="rotate(-16 196 286)" />
+        <ellipse cx="232" cy="268" rx="17" ry="22" transform="rotate(-6 232 268)" />
+        <ellipse cx="280" cy="268" rx="17" ry="22" transform="rotate(6 280 268)" />
+        <ellipse cx="316" cy="286" rx="17" ry="21" transform="rotate(16 316 286)" />
+    </g>
+
+    <!-- Small sparkle: nothing here yet -->
+    <g fill="#003893" fill-opacity="0.35">
+        <path d="M392 258 L400 280 L422 288 L400 296 L392 318 L384 296 L362 288 L384 280 Z" />
+        <path d="M118 300 L124 316 L140 322 L124 328 L118 344 L112 328 L96 322 L112 316 Z" />
+    </g>
+</svg>

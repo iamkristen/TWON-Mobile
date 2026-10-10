@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="A magnifying glass over an empty clothing rail">
+    <!-- Filtered to nothing: the rail is stocked, the search simply matched none of it.
+         Nepal flag palette: Crimson #DC143C, Blue #003893. -->
+    <defs>
+        <linearGradient id="lensFade" gradientUnits="userSpaceOnUse" x1="180" y1="180" x2="300" y2="300">
+            <stop offset="0" stop-color="#003893" stop-opacity="0.20" />
+            <stop offset="1" stop-color="#003893" stop-opacity="0.06" />
+        </linearGradient>
+    </defs>
+
+    <!-- Stocked rail behind, faded back -->
+    <g stroke="#003893" stroke-width="8" stroke-linecap="round" fill="none" stroke-opacity="0.22">
+        <path d="M64 150 L448 150" />
+        <path d="M150 150 L150 196" />
+        <path d="M232 150 L232 196" />
+        <path d="M314 150 L314 196" />
+        <path d="M396 150 L396 196" />
+    </g>
+    <g fill="#003893" fill-opacity="0.13">
+        <rect x="128" y="196" width="44" height="76" rx="8" />
+        <rect x="210" y="196" width="44" height="76" rx="8" />
+        <rect x="292" y="196" width="44" height="76" rx="8" />
+        <rect x="374" y="196" width="44" height="76" rx="8" />
+    </g>
+
+    <!-- Magnifier, tilted like a lifted lid -->
+    <g transform="rotate(-18 250 258)">
+        <!-- Handle -->
+        <path d="M312 320 L378 386" stroke="#DC143C" stroke-width="20" stroke-linecap="round" stroke-opacity="0.75" />
+        <path d="M312 320 L378 386" stroke="#DC143C" stroke-width="8" stroke-linecap="round" stroke-opacity="0.30" />
+        <!-- Rim -->
+        <circle cx="242" cy="246" r="104" fill="url(#lensFade)" stroke="#DC143C" stroke-width="11" />
+        <!-- Glass highlight -->
+        <path d="M182 214 A 74 74 0 0 1 232 178" fill="none" stroke="#ffffff" stroke-width="11"
+            stroke-linecap="round" stroke-opacity="0.55" />
+    </g>
+
+    <!-- Nothing matched: a small empty mark inside the lens -->
+    <g transform="rotate(-18 250 258)">
+        <circle cx="242" cy="246" r="30" fill="none" stroke="#003893" stroke-width="9" stroke-opacity="0.35"
+            stroke-dasharray="10 12" />
+        <path d="M226 262 L258 230" stroke="#DC143C" stroke-width="9" stroke-linecap="round" stroke-opacity="0.55" />
+    </g>
+
+    <!-- A few loose threads drifting off: the filter, not the stock -->
+    <g fill="#003893" fill-opacity="0.24">
+        <path d="M84 372 L90 388 L106 394 L90 400 L84 416 L78 400 L62 394 L78 388 Z" />
+        <path d="M428 396 L433 408 L445 413 L433 418 L428 430 L423 418 L411 413 L423 408 Z" />
+    </g>
+</svg>
