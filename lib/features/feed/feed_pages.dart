@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,11 +17,14 @@ import '../../shared/forms.dart';
 import '../auth/auth_cubit.dart';
 import '../account/account_pages.dart';
 import 'post_composer_support.dart';
+import 'post_engagement_cubit.dart';
+import 'post_type_badge.dart';
+import 'comment_gif_picker.dart';
+import 'feed_shimmer.dart';
 
 const postTypes = ['general', 'housing', 'visa', 'fraud', 'scam', 'help'];
 
-String postTypeLabel(String value) =>
-    value[0].toUpperCase() + value.substring(1);
+String postTypeLabel(String value) => postTypeDisplayLabel(value);
 IconData postTypeIcon(String value) => switch (value) {
   'housing' => Icons.home_outlined,
   'visa' => Icons.badge_outlined,
@@ -86,7 +91,12 @@ class _FeedTimelineState extends State<FeedTimeline> {
   }
 
   @override
-  Widget build(BuildContext c) => BlocBuilder<CollectionCubit, CollectionState>(
+  Widget build(BuildContext c) => BlocConsumer<CollectionCubit, CollectionState>(
+    listener: (_, state) {
+      if (!state.loading && !state.loadingMore && state.error == null && state.cursor != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) _nextPage(); });
+      }
+    },
     builder: (d, s) {
       final cubit = d.read<CollectionCubit>();
       return RefreshIndicator(
@@ -168,10 +178,7 @@ class _FeedTimelineState extends State<FeedTimeline> {
                         retry: () => cubit.load(more: s.cursor != null),
                       ),
                     if (s.loadingMore)
-                      const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
+                      const FeedSkeleton(),
                     if (s.cursor != null && !s.loadingMore && s.error == null)
                       TextButton(
                         onPressed: () => cubit.load(more: true),
@@ -305,7 +312,8 @@ class FeedSkeleton extends StatelessWidget {
           color: Theme.of(c).colorScheme.surface,
           borderRadius: BorderRadius.circular(24),
         ),
-        child: Column(
+        child: FeedShimmer(
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -328,10 +336,26 @@ class FeedSkeleton extends StatelessWidget {
               ),
             ),
           ],
+          ),
         ),
       ),
     );
   }
+}
+
+class AnonymousWolfAvatar extends StatelessWidget {
+  const AnonymousWolfAvatar({super.key, this.radius = 22});
+  final double radius;
+  @override
+  Widget build(BuildContext context) => ClipOval(
+    child: Image.asset(
+      'assets/branding/anonymous-wolf.png',
+      width: radius * 2,
+      height: radius * 2,
+      fit: BoxFit.cover,
+      excludeFromSemantics: true,
+    ),
+  );
 }
 
 class PostCard extends StatefulWidget {
@@ -349,47 +373,55 @@ class PostCard extends StatefulWidget {
 }
 
 class _PostCardState extends State<PostCard> {
-  late Entity post = widget.post;
-  bool liking = false, expanded = false;
-  @override
-  void didUpdateWidget(PostCard old) {
-    super.didUpdateWidget(old);
-    if (old.post != widget.post) post = widget.post;
-  }
+  bool expanded = false;
+  Entity get post => context.read<PostEngagementCubit>().resolve(widget.post);
+  bool get liking => context.read<PostEngagementCubit>().state.busy.contains(post.id);
+  bool get liked => post.strings('likes').contains(context.read<AuthCubit>().userId);
 
-  bool get liked =>
-      post.strings('likes').contains(context.read<AuthCubit>().userId);
   Future<void> like({bool onlyLike = false}) async {
-    if (liking || onlyLike && liked) return;
-    setState(() => liking = true);
     try {
-      final payload = asJson(
-        await repository(
-          context,
-        ).request('posts/${post.id}/like', method: liked ? 'DELETE' : 'POST'),
+      await context.read<PostEngagementCubit>().toggleLike(
+        post, context.read<AuthCubit>().userId, onlyLike: onlyLike,
       );
-      final updated = Entity({
-        ...post.data,
-        ...payload,
-        if (payload['authorId'] is! Map && post.data['authorId'] is Map)
-          'authorId': post.data['authorId'],
-        if (payload['sharedPostId'] is! Map && post.data['sharedPostId'] is Map)
-          'sharedPostId': post.data['sharedPostId'],
-      });
       if (!mounted) return;
-      setState(() => post = updated);
-      widget.onChanged?.call(updated);
+      widget.onChanged?.call(post);
       HapticFeedback.selectionClick();
     } catch (error) {
       if (mounted) notice(context, error.toString());
-    } finally {
-      if (mounted) setState(() => liking = false);
     }
   }
 
   Future<void> comments() async {
-    await context.push('/posts/${post.id}');
-    if (mounted) widget.refresh();
+    final id = post.id;
+    await showModalBottomSheet<void>(
+      context: context,
+      useRootNavigator: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      enableDrag: true,
+      isDismissible: true,
+      clipBehavior: Clip.antiAlias,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheet) => AnimatedPadding(
+        duration: MediaQuery.disableAnimationsOf(sheet)
+            ? Duration.zero : const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(sheet).bottom),
+        child: DraggableScrollableSheet(
+          initialChildSize: .78,
+          minChildSize: .3,
+          maxChildSize: .95,
+          expand: false,
+          snap: true,
+          snapSizes: const [.78],
+          shouldCloseOnMinExtent: true,
+          builder: (_, scrollController) => CommentsPane(id, scrollController: scrollController),
+        ),
+      ),
+    );
   }
 
   Future<void> share() async {
@@ -407,11 +439,18 @@ class _PostCardState extends State<PostCard> {
               subtitle: const Text('Share a link to this post'),
               onTap: () async {
                 Navigator.pop(sheet);
-                await SharePlus.instance.share(
+                final engagement = context.read<PostEngagementCubit>();
+                final id = post.id;
+                final result = await SharePlus.instance.share(
                   ShareParams(
                     text: '${AppConfig.websiteUrl}/feed?post=${post.id}',
                   ),
                 );
+                if (result.status == ShareResultStatus.success) {
+                  try { await engagement.recordShare(id); } catch (_) {
+                    if (mounted) notice(context, 'Shared, but the share count could not update.');
+                  }
+                }
               },
             ),
             ListTile(
@@ -442,6 +481,7 @@ class _PostCardState extends State<PostCard> {
                         body: v,
                       ),
                       onSuccess: (_) {
+                        context.read<PostEngagementCubit>().refresh(post.id).catchError((Object _) {});
                         Navigator.pop(d);
                         widget.refresh();
                       },
@@ -482,6 +522,7 @@ class _PostCardState extends State<PostCard> {
 
   @override
   Widget build(BuildContext c) {
+    c.watch<PostEngagementCubit>();
     final scheme = Theme.of(c).colorScheme;
     final author = post.object('authorId');
     final anonymous = post.flag('isAnonymous');
@@ -502,7 +543,9 @@ class _PostCardState extends State<PostCard> {
             padding: const EdgeInsets.fromLTRB(16, 16, 6, 0),
             child: Row(
               children: [
-                MemberAvatar(anonymous ? {} : author, radius: 22),
+                anonymous
+                    ? const AnonymousWolfAvatar(radius: 22)
+                    : MemberAvatar(author, radius: 22),
                 const SizedBox(width: 11),
                 Expanded(
                   child: InkWell(
@@ -515,7 +558,7 @@ class _PostCardState extends State<PostCard> {
                       children: [
                         Text(
                           anonymous
-                              ? 'Anonymous pack member'
+                              ? 'Anonymous Wolf'
                               : author['fullName']?.toString() ?? 'Pack member',
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
@@ -546,6 +589,10 @@ class _PostCardState extends State<PostCard> {
                                   : Icons.public_rounded,
                               size: 12,
                               color: scheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: PostTypeBadge(post.text('type', 'general')),
                             ),
                           ],
                         ),
@@ -649,57 +696,13 @@ class _PostCardState extends State<PostCard> {
               ),
             ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: .15),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(Icons.favorite, size: 11, color: scheme.primary),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    '${post.number('likeCount')} ${post.number('likeCount') == 1 ? 'like' : 'likes'}',
-                    style: TextStyle(
-                      color: scheme.onSurfaceVariant,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-                Flexible(
-                  child: TextButton(
-                    onPressed: comments,
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      minimumSize: const Size(48, 36),
-                      foregroundColor: scheme.onSurfaceVariant,
-                    ),
-                    child: Text(
-                      '${post.number('commentCount')} ${post.number('commentCount') == 1 ? 'comment' : 'comments'}',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Divider(
-            height: 1,
-            indent: 16,
-            endIndent: 16,
-            color: scheme.outlineVariant.withValues(alpha: .4),
-          ),
-          Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
             child: Row(
               children: [
                 Expanded(
                   child: SocialAction(
-                    label: liked ? 'Liked' : 'Like',
+                    label: '${post.number('likeCount')}',
+                    semanticLabel: '${post.number('likeCount')} likes',
                     icon: liked
                         ? Icons.favorite_rounded
                         : Icons.favorite_border_rounded,
@@ -710,14 +713,16 @@ class _PostCardState extends State<PostCard> {
                 ),
                 Expanded(
                   child: SocialAction(
-                    label: 'Comment',
+                    label: '${post.number('commentCount')}',
+                    semanticLabel: '${post.number('commentCount')} comments',
                     icon: Icons.chat_bubble_outline_rounded,
                     onTap: comments,
                   ),
                 ),
                 Expanded(
                   child: SocialAction(
-                    label: 'Share',
+                    label: '${post.number('shareCount')}',
+                    semanticLabel: '${post.number('shareCount')} shares',
                     icon: Icons.ios_share_rounded,
                     onTap: share,
                   ),
@@ -739,8 +744,10 @@ class SocialAction extends StatelessWidget {
     required this.onTap,
     this.selected = false,
     this.busy = false,
+    this.semanticLabel,
   });
   final String label;
+  final String? semanticLabel;
   final IconData icon;
   final VoidCallback onTap;
   final bool selected, busy;
@@ -754,7 +761,7 @@ class SocialAction extends StatelessWidget {
         : const Duration(milliseconds: 180);
     return Semantics(
       button: true,
-      label: label,
+      label: semanticLabel ?? label,
       selected: selected,
       child: Material(
         color: selected ? color.withValues(alpha: .09) : Colors.transparent,
@@ -1308,16 +1315,15 @@ class PostEditorState extends State<PostEditor> {
                                       width: 1.5,
                                     ),
                                   ),
-                                  child: MemberAvatar(
-                                    anonymous ? {} : user,
-                                    radius: 23,
-                                  ),
+                                  child: anonymous
+                                      ? const AnonymousWolfAvatar(radius: 23)
+                                      : MemberAvatar(user, radius: 23),
                                 ),
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Text(
                                     anonymous
-                                        ? 'Anonymous pack member'
+                                        ? 'Anonymous Wolf'
                                         : '${user['fullName'] ?? 'Pack member'}',
                                     style: Theme.of(c).textTheme.titleMedium
                                         ?.copyWith(
@@ -1497,7 +1503,7 @@ class PostEditorState extends State<PostEditor> {
                             textCapitalization: TextCapitalization.sentences,
                             style: const TextStyle(fontSize: 20, height: 1.5),
                             decoration: InputDecoration(
-                              hintText: 'What’s on your mind?',
+                              hintText: anonymous ? 'Speak freely, ghost wolf…' : 'What’s on your mind?',
                               counterText: body.text.length >= 19000
                                   ? '${body.text.length}/20000'
                                   : '',
@@ -1612,7 +1618,8 @@ class PostEditorState extends State<PostEditor> {
                             Icons.masks_outlined,
                             color: Color(0xffc7b1ff),
                           ),
-                          title: const Text('Share anonymously'),
+                          title: Text(anonymous ? 'Incognito Mode' : 'Public Identity'),
+                          subtitle: Text(anonymous ? 'Posting as Anonymous Wolf' : 'Post with your name and profile photo'),
                           value: anonymous,
                           onChanged: saving
                               ? null
@@ -1695,188 +1702,657 @@ class PostDetailPage extends StatelessWidget {
 }
 
 class CommentsPane extends StatefulWidget {
-  const CommentsPane(this.id, {super.key});
+  const CommentsPane(this.id, {super.key, this.scrollController});
   final String id;
+  final ScrollController? scrollController;
   @override
   State<CommentsPane> createState() => _CommentsPaneState();
 }
 
 class _CommentsPaneState extends State<CommentsPane> {
-  int revision = 0;
-  String? reply;
-  String? replyName;
+  late final CommentsCubit commentsCubit;
+  List<Entity> get _comments => commentsCubit.state.items;
+  bool get _loading => commentsCubit.state.loading;
+  String? get _error => commentsCubit.state.error;
+
+  String? replyToCommentId;
+  String? replyToCommentAuthor;
   final controller = TextEditingController();
   final mutation = MutationCubit();
+  final composerFocus = FocusNode();
+  final expandedReplies = <String>{};
+  String? attachmentUrl;
+  bool uploadingAttachment = false;
+  final attachmentMenu = MenuController();
+  bool attachmentMenuOpen = false;
+  late final MentionCubit _mentionCubit;
+
+  @override
+  void initState() {
+    super.initState();
+    commentsCubit = CommentsCubit(repository(context), widget.id, context.read<PostEngagementCubit>());
+    _mentionCubit = MentionCubit(repository(context));
+    controller.addListener(_onTextChanged);
+    composerFocus.addListener(_updateComposerFocus);
+    _loadComments();
+  }
+
+  void _onTextChanged() {
+    final range = activeMention(controller.text, controller.selection);
+    _mentionCubit.update(range);
+  }
+
+  void _updateComposerFocus() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadComments() => commentsCubit.load();
+
+  String _threadId(Entity comment) {
+    final byId = {for (final c in _comments) c.id: c};
+    final seen = <String>{comment.id};
+    var current = comment;
+    while (true) {
+      final parent = byId[current.text('parentCommentId')];
+      if (parent == null || !seen.add(parent.id)) return current.id;
+      current = parent;
+    }
+  }
+
+  Future<void> _likeComment(Entity row) async {
+    try {
+      await commentsCubit.toggleLike(row, context.read<AuthCubit>().userId);
+    } catch (error) {
+      if (mounted) notice(context, error.toString());
+    }
+  }
+
+  Future<void> sendComment() async {
+    if (uploadingAttachment || mutation.state.busy || commentsCubit.state.busy ||
+        (controller.text.trim().isEmpty && attachmentUrl == null)) return;
+    final parent = replyToCommentId;
+    final root = parent == null ? null : _comments.where((r) => r.id == parent).firstOrNull;
+    await mutation.run(() => commentsCubit.send({
+      'text': controller.text.trim(),
+      if (attachmentUrl != null) 'attachmentUrl': attachmentUrl,
+      if (parent != null) 'parentCommentId': parent,
+    }));
+    if (!mounted) return;
+    if (mutation.state.success) {
+      controller.clear();
+      setState(() {
+        if (root != null) expandedReplies.add(_threadId(root));
+        replyToCommentId = null;
+        replyToCommentAuthor = null;
+        attachmentUrl = null;
+      });
+    } else {
+      notice(context, mutation.state.error ?? 'Could not send comment.');
+    }
+  }
+
+  Future<void> commentAction(
+    BuildContext c,
+    Entity row,
+    String action,
+  ) async {
+    if (action == 'edit') {
+      await showModalBottomSheet<void>(
+        context: c,
+        isScrollControlled: true,
+        useSafeArea: true,
+        builder: (sheet) => Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.viewInsetsOf(sheet).bottom,
+          ),
+          child: SizedBox(
+            height: 400,
+            child: FeatureForm(
+              title: 'Edit reply',
+              fields: [
+                FieldSpec(
+                  'text',
+                  'Reply',
+                  initial: row.text('text'),
+                  required: row.text('attachmentUrl').isEmpty,
+                  kind: FieldKind.multiline,
+                  maxLength: 2000,
+                ),
+              ],
+              submit: (v) => commentsCubit.edit(row.id, v),
+              onSuccess: (_) {
+                Navigator.pop(sheet);
+              },
+            ),
+          ),
+        ),
+      );
+    } else {
+      if (!await confirm(c, 'Delete comment', 'Remove this reply?') ||
+          !c.mounted) {
+        return;
+      }
+      try {
+        await commentsCubit.remove(row.id);
+      } catch (error) {
+        if (c.mounted) notice(c, error.toString());
+      }
+    }
+  }
+
+  Future<void> pickCommentGif() async {
+    if (uploadingAttachment || mutation.state.busy) return;
+    composerFocus.unfocus();
+    final url = await showModalBottomSheet<String>(
+      context: context,
+      useRootNavigator: true,
+      useSafeArea: true,
+      isScrollControlled: true,
+      showDragHandle: true,
+      clipBehavior: Clip.antiAlias,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (sheet) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(sheet).bottom),
+        child: SizedBox(height: MediaQuery.sizeOf(sheet).height * .65, child: const CommentGifPicker()),
+      ),
+    );
+    if (!mounted || url == null) return;
+    setState(() => attachmentUrl = url);
+  }
+
+  Future<void> pickCommentPicture() async {
+    if (uploadingAttachment || mutation.state.busy) return;
+    setState(() => uploadingAttachment = true);
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+      );
+      if (files.isEmpty || files.first.path == null || !mounted) return;
+      final path = files.first.path!;
+      if (await File(path).length() > 10 * 1024 * 1024) {
+        throw const AppFailure('Choose a picture or GIF under 10 MB.');
+      }
+      if (!mounted) return;
+      final uploaded = await repository(context).upload(path);
+      if (mounted) setState(() => attachmentUrl = uploaded['url'] as String);
+    } catch (error) {
+      if (mounted) notice(context, error.toString());
+    } finally {
+      if (mounted) setState(() => uploadingAttachment = false);
+    }
+  }
+
   @override
   void dispose() {
+    controller.removeListener(_onTextChanged);
     controller.dispose();
+    composerFocus.removeListener(_updateComposerFocus);
+    composerFocus.dispose();
+    commentsCubit.close();
+    _mentionCubit.close();
     mutation.close();
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext c) => Column(
-    children: [
-      Expanded(
-        child: CollectionView(
-          key: ValueKey(revision),
-          path: 'posts/${widget.id}/comments',
-          empty: 'Be the first to reply.',
-          builder: (d, row, refresh) {
-            final me = c.read<AuthCubit>().userId;
-            return Card(
-              child: ListTile(
-                title: Text(
-                  row.object('authorId')['fullName']?.toString() ??
-                      'Pack member',
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+  void _beginReply(Entity row) {
+    if (mutation.state.busy) return;
+    setState(() {
+      replyToCommentId = row.id;
+      replyToCommentAuthor = row.object('authorId')['fullName']?.toString() ?? 'Pack member';
+    });
+    composerFocus.requestFocus();
+  }
+
+  Widget _commentRow(BuildContext c, Entity row, int depth) {
+    final me = c.read<AuthCubit>().userId;
+    final author = row.object('authorId');
+    final own = entityId(row.data['authorId']) == me;
+    final liked = row.strings('likes').contains(me);
+    final muted = Theme.of(c).colorScheme.onSurfaceVariant;
+    return Padding(
+      padding: EdgeInsets.only(left: depth == 0 ? 0 : 36, bottom: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          MemberAvatar(author, radius: 16),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    if (row.text('parentCommentId').isNotEmpty)
-                      const Text('↳ Reply', style: TextStyle(fontSize: 11)),
-                    SocialPostText(
-                      text: row.text('text'),
-                      mentions: row.rows('mentionDisplay'),
-                    ),
-                    Wrap(
-                      children: [
-                        TextButton(
-                          onPressed: () => setState(() {
-                            reply = row.id;
-                            replyName =
-                                row
-                                    .object('authorId')['fullName']
-                                    ?.toString() ??
-                                'Pack member';
-                          }),
-                          child: const Text('Reply'),
-                        ),
-                        ActionButton(
-                          tonal: true,
-                          label: '${row.number('likeCount')} likes',
-                          action: () => repository(c).request(
-                            'posts/${widget.id}/comments/${row.id}/like',
-                            method: row.strings('likes').contains(me)
-                                ? 'DELETE'
-                                : 'POST',
-                          ),
-                          onSuccess: (_) => refresh(),
-                        ),
-                        if (entityId(row.data['authorId']) == me) ...[
-                          TextButton(
-                            onPressed: () => showModalBottomSheet(
-                              context: c,
-                              isScrollControlled: true,
-                              builder: (sheet) => SizedBox(
-                                height: 450,
-                                child: FeatureForm(
-                                  title: 'Edit reply',
-                                  fields: [
-                                    FieldSpec(
-                                      'text',
-                                      'Reply',
-                                      initial: row.text('text'),
-                                      kind: FieldKind.multiline,
-                                      maxLength: 2000,
-                                    ),
-                                  ],
-                                  submit: (v) => repository(c).request(
-                                    'posts/${widget.id}/comments/${row.id}',
-                                    method: 'PATCH',
-                                    body: v,
-                                  ),
-                                  onSuccess: (_) {
-                                    Navigator.pop(sheet);
-                                    refresh();
-                                  },
-                                ),
-                              ),
-                            ),
-                            child: const Text('Edit'),
-                          ),
-                          ActionButton(
-                            tonal: true,
-                            label: 'Delete',
-                            confirmation: 'Remove this reply?',
-                            action: () => repository(c).request(
-                              'posts/${widget.id}/comments/${row.id}',
-                              method: 'DELETE',
-                            ),
-                            onSuccess: (_) => refresh(),
-                          ),
-                        ],
-                      ],
-                    ),
+                    Text(author['fullName']?.toString() ?? 'Pack member',
+                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                    Text(relativePostTime(row.text('createdAt')),
+                      style: TextStyle(fontSize: 11, color: muted)),
                   ],
                 ),
-              ),
-            );
-          },
-        ),
+                if (row.text('text').isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: SocialPostText(text: row.text('text'), mentions: row.rows('mentionDisplay')),
+                  ),
+                if (row.text('attachmentUrl').isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: GestureDetector(
+                      onTap: () => showDialog<void>(
+                        context: c,
+                        builder: (dialog) => Dialog(
+                          child: Stack(children: [
+                            InteractiveViewer(child: BrandImage(row.text('attachmentUrl'), height: 320, fit: BoxFit.contain)),
+                            Positioned(right: 4, top: 4, child: IconButton(
+                              tooltip: 'Close picture', onPressed: () => Navigator.pop(dialog), icon: const Icon(Icons.close))),
+                          ]),
+                        ),
+                      ),
+                      child: BrandImage(row.text('attachmentUrl'), height: 150, fit: BoxFit.contain),
+                    ),
+                  ),
+                Row(children: [
+                  TextButton(
+                    style: TextButton.styleFrom(foregroundColor: muted, padding: EdgeInsets.zero),
+                    onPressed: mutation.state.busy ? null : () => _beginReply(row),
+                    child: const Text('Reply', style: TextStyle(fontSize: 12)),
+                  ),
+                  if (own) PopupMenuButton<String>(
+                    tooltip: 'Comment options',
+                    enabled: !commentsCubit.state.busy,
+                    icon: Icon(Icons.more_horiz, size: 18, color: muted),
+                    onSelected: (action) => commentAction(c, row, action),
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'edit', child: Text('Edit')),
+                      PopupMenuItem(value: 'delete', child: Text('Delete')),
+                    ],
+                  ),
+                ]),
+              ],
+            ),
+          ),
+          Column(children: [
+            IconButton(
+              tooltip: liked ? 'Unlike comment' : 'Like comment',
+              onPressed: commentsCubit.state.busy ? null : () => _likeComment(row),
+              icon: Icon(liked ? Icons.favorite : Icons.favorite_border, size: 18,
+                color: liked ? Theme.of(c).colorScheme.primary : muted),
+            ),
+            if (row.number('likeCount') > 0)
+              Text('${row.number('likeCount')}', style: TextStyle(fontSize: 11, color: muted)),
+          ]),
+        ],
       ),
-      if (reply != null)
-        ListTile(
-          dense: true,
-          title: Text('Replying to $replyName'),
-          trailing: IconButton(
-            tooltip: 'Cancel reply',
-            onPressed: () => setState(() => reply = null),
-            icon: const Icon(Icons.close),
+    );
+  }
+
+  List<Widget> _threadWidgets(BuildContext c, Entity root) {
+    final replies = _comments.where((row) => row.id != root.id && _threadId(row) == root.id).toList();
+    final expanded = expandedReplies.contains(root.id);
+    return [
+      _commentRow(c, root, 0),
+      for (final row in expanded ? replies : replies.take(1)) _commentRow(c, row, 1),
+      if (replies.length > 1)
+        Padding(
+          padding: const EdgeInsets.only(left: 46, bottom: 8),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () => setState(() {
+                if (expanded) { expandedReplies.remove(root.id); } else { expandedReplies.add(root.id); }
+              }),
+              child: Text(expanded ? 'Show fewer replies' : 'Show all replies (${replies.length})',
+                style: TextStyle(fontSize: 12, color: Theme.of(c).colorScheme.onSurfaceVariant)),
+            ),
           ),
         ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext c) => BlocBuilder<CommentsCubit, CommentsState>(
+    bloc: commentsCubit,
+    builder: (c, state) => Column(
+    children: [
+      Expanded(
+          child: ListView(
+            controller: widget.scrollController,
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.all(16),
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: [
+              if (_loading && _comments.isEmpty)
+                const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
+              if (_error != null) ErrorPanel(_error!, retry: () => _loadComments()),
+              if (!_loading && _error == null && _comments.isEmpty)
+                const Padding(padding: EdgeInsets.all(24), child: Text('Be the first to comment.', textAlign: TextAlign.center)),
+              for (final root in _comments.where((row) => _threadId(row) == row.id))
+                ..._threadWidgets(c, root),
+            ],
+          ),
+      ),
+      if (replyToCommentId != null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
+          child: Container(
+            padding: const EdgeInsets.only(
+              left: 12,
+              right: 4,
+              top: 4,
+              bottom: 4,
+            ),
+            decoration: BoxDecoration(
+              color: Theme.of(
+                c,
+              ).colorScheme.primaryContainer.withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: Theme.of(c).colorScheme.primary.withValues(alpha: 0.2),
+                width: 1,
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.reply_rounded,
+                  size: 16,
+                  color: Theme.of(c).colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Replying to $replyToCommentAuthor',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(c).colorScheme.onSurface,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Cancel reply',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 28,
+                    minHeight: 28,
+                  ),
+                  iconSize: 16,
+                  color: Theme.of(c).colorScheme.onSurfaceVariant,
+                  onPressed: () => setState(() {
+                    replyToCommentId = null;
+                    replyToCommentAuthor = null;
+                  }),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ),
+          ),
+        ),
+      MentionSuggestions(
+        cubit: _mentionCubit,
+        onPick: (member) {
+          final range = activeMention(
+            controller.text,
+            controller.selection,
+          );
+          if (range == null) return;
+          final suffix = range.end < controller.text.length &&
+                  RegExp(r'\s')
+                      .hasMatch(controller.text[range.end])
+              ? ''
+              : ' ';
+          final replacement = '@${member.text('handle')}$suffix';
+          final newText = controller.text.replaceRange(
+            range.start,
+            range.end,
+            replacement,
+          );
+          controller.value = TextEditingValue(
+            text: newText,
+            selection: TextSelection.collapsed(
+              offset: range.start +
+                  replacement.length +
+                  (suffix.isEmpty ? 1 : 0),
+            ),
+          );
+          composerFocus.requestFocus();
+        },
+      ),
       BlocProvider.value(
         value: mutation,
         child: BlocBuilder<MutationCubit, MutationState>(
           builder: (d, s) => SafeArea(
             top: false,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
+            child: Container(
+              margin: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+              decoration: BoxDecoration(
+                color: Theme.of(c).colorScheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(26),
+                border: Border.all(
+                  color: composerFocus.hasFocus
+                      ? Theme.of(c).colorScheme.primary.withValues(alpha: 0.7)
+                      : Theme.of(
+                          c,
+                        ).colorScheme.outlineVariant.withValues(alpha: 0.5),
+                  width: composerFocus.hasFocus ? 1.5 : 1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(
+                      alpha: composerFocus.hasFocus ? 0.04 : 0.02,
+                    ),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: controller,
-                      maxLength: 2000,
-                      decoration: const InputDecoration(
-                        hintText: 'Write a reply',
-                        counterText: '',
+                  if (attachmentUrl != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(14),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: Theme.of(c)
+                                        .colorScheme
+                                        .outlineVariant
+                                        .withValues(alpha: 0.6),
+                                  ),
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                child: BrandImage(
+                                  attachmentUrl!,
+                                  width: 72,
+                                  height: 52,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              top: -6,
+                              right: -6,
+                              child: Material(
+                                color: Colors.black.withValues(alpha: 0.75),
+                                shape: const CircleBorder(),
+                                child: InkWell(
+                                  customBorder: const CircleBorder(),
+                                  onTap: s.busy
+                                      ? null
+                                      : () => setState(
+                                            () => attachmentUrl = null,
+                                          ),
+                                  child: const Tooltip(
+                                    message: 'Remove attachment',
+                                    child: Padding(
+                                      padding: EdgeInsets.all(4),
+                                      child: Icon(
+                                        Icons.close_rounded,
+                                        size: 14,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  IconButton.filled(
-                    tooltip: 'Send reply',
-                    onPressed: s.busy
-                        ? null
-                        : () async {
-                            if (controller.text.trim().isEmpty) return;
-                            await mutation.run(
-                              () => repository(c).request(
-                                'posts/${widget.id}/comments',
-                                method: 'POST',
-                                body: {
-                                  'text': controller.text.trim(),
-                                  if (reply != null) 'parentCommentId': reply,
-                                },
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 3,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        TextFieldTapRegion(
+                          child: MenuAnchor(
+                            controller: attachmentMenu,
+                            onOpen: () { if (mounted) setState(() => attachmentMenuOpen = true); },
+                            onClose: () { if (mounted) setState(() => attachmentMenuOpen = false); },
+                            style: MenuStyle(
+                              shape: WidgetStatePropertyAll(RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              )),
+                            ),
+                            menuChildren: [
+                              MenuItemButton(
+                                leadingIcon: const Icon(Icons.image_outlined, size: 20),
+                                onPressed: s.busy || uploadingAttachment ? null : pickCommentPicture,
+                                child: const Text('Picture'),
                               ),
-                            );
-                            if (!mounted || !c.mounted) return;
-                            if (mutation.state.success) {
-                              controller.clear();
-                              setState(() {
-                                reply = null;
-                                revision++;
-                              });
-                            } else {
-                              notice(
-                                c,
-                                mutation.state.error ?? 'Could not reply.',
+                              MenuItemButton(
+                                leadingIcon: const Icon(Icons.gif_box_outlined, size: 20),
+                                onPressed: s.busy || uploadingAttachment ? null : pickCommentGif,
+                                child: const Text('GIF'),
+                              ),
+                            ],
+                            builder: (context, menu, child) => IconButton(
+                              tooltip: attachmentMenuOpen ? 'Close attachments' : 'Add picture or GIF',
+                              onPressed: s.busy || uploadingAttachment ? null : () {
+                                if (menu.isOpen) { menu.close(); } else { menu.open(); }
+                              },
+                              color: attachmentMenuOpen
+                                  ? Theme.of(c).colorScheme.primary
+                                  : Theme.of(c).colorScheme.onSurfaceVariant,
+                              icon: uploadingAttachment
+                                  ? const SizedBox(width: 18, height: 18,
+                                      child: CircularProgressIndicator(strokeWidth: 2))
+                                  : AnimatedRotation(
+                                      turns: attachmentMenuOpen ? .125 : 0,
+                                      duration: MediaQuery.disableAnimationsOf(c)
+                                          ? Duration.zero : const Duration(milliseconds: 200),
+                                      curve: Curves.easeOutCubic,
+                                      child: const Icon(Icons.add_rounded, size: 24),
+                                    ),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: TextField(
+                            controller: controller,
+                            focusNode: composerFocus,
+                            enabled: !s.busy,
+                            onTapOutside: (_) => composerFocus.unfocus(),
+                            minLines: 1,
+                            maxLines: 4,
+                            maxLength: 2000,
+                            style: const TextStyle(fontSize: 14, height: 1.3),
+                            decoration: InputDecoration(
+                              hintText: replyToCommentId != null
+                                  ? 'Write a reply…'
+                                  : 'Add a comment…',
+                              hintStyle: TextStyle(
+                                fontSize: 14,
+                                color: Theme.of(c).colorScheme.onSurfaceVariant
+                                    .withValues(alpha: 0.55),
+                              ),
+                              counterText: '',
+                              filled: false,
+                              isDense: true,
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              disabledBorder: InputBorder.none,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 10,
+                              ),
+                            ),
+                          ),
+                        ),
+                        TextFieldTapRegion(
+                          child: ValueListenableBuilder<TextEditingValue>(
+                            valueListenable: controller,
+                            builder: (context, value, _) {
+                              final hasContent =
+                                  value.text.trim().isNotEmpty ||
+                                  attachmentUrl != null;
+                              return IconButton.filled(
+                                tooltip: 'Send reply',
+                                style: IconButton.styleFrom(
+                                  backgroundColor: hasContent
+                                      ? Theme.of(c).colorScheme.primary
+                                      : Theme.of(c)
+                                            .colorScheme
+                                            .surfaceContainerHighest
+                                            .withValues(alpha: 0.4),
+                                  foregroundColor: hasContent
+                                      ? Theme.of(c).colorScheme.onPrimary
+                                      : Theme.of(c).colorScheme.onSurfaceVariant
+                                            .withValues(alpha: 0.35),
+                                  minimumSize: const Size(36, 36),
+                                  padding: EdgeInsets.zero,
+                                  shape: const CircleBorder(),
+                                ),
+                                onPressed: (s.busy || uploadingAttachment)
+                                    ? null
+                                    : () {
+                                        if (controller.text.trim().isEmpty &&
+                                            attachmentUrl == null) {
+                                          return;
+                                        }
+                                        sendComment();
+                                      },
+                                icon: s.busy
+                                    ? SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Theme.of(
+                                            c,
+                                          ).colorScheme.onPrimary,
+                                        ),
+                                      )
+                                    : const Icon(
+                                        Icons.arrow_upward_rounded,
+                                        size: 18,
+                                      ),
                               );
-                            }
-                          },
-                    icon: s.busy
-                        ? const CircularProgressIndicator()
-                        : const Icon(Icons.send),
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -1885,6 +2361,7 @@ class _CommentsPaneState extends State<CommentsPane> {
         ),
       ),
     ],
+    ),
   );
 }
 

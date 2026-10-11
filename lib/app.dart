@@ -11,6 +11,7 @@ import 'core/realtime.dart';
 import 'features/auth/auth_cubit.dart';
 import 'features/auth/auth_pages.dart';
 import 'features/feed/feed_pages.dart';
+import 'features/feed/post_engagement_cubit.dart';
 import 'features/clans/clan_pages.dart';
 import 'features/gatherings/gathering_pages.dart';
 import 'features/chat/chat_pages.dart';
@@ -30,6 +31,9 @@ class TwonApp extends StatefulWidget {
 class _TwonAppState extends State<TwonApp> with WidgetsBindingObserver {
   late final auth = AuthCubit(widget.api);
   late final theme = ThemeCubit(widget.preferences);
+  late final engagement = PostEngagementCubit(widget.api);
+  StreamSubscription<AuthState>? engagementSession;
+  String engagementUser = "";
   late final realtime = RealtimeService(widget.api);
   late final refresh = _AuthRefresh(auth);
   late final router = _router(auth, refresh);
@@ -37,6 +41,13 @@ class _TwonAppState extends State<TwonApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    engagementSession = auth.stream.listen((state) {
+      final user = entityId(state.user);
+      if (user != engagementUser) {
+        engagementUser = user;
+        engagement.reset();
+      }
+    });
     auth.bootstrap();
   }
 
@@ -55,6 +66,8 @@ class _TwonAppState extends State<TwonApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     router.dispose();
     refresh.dispose();
+    engagementSession?.cancel();
+    engagement.close();
     auth.close();
     theme.close();
     realtime.dispose();
@@ -73,6 +86,7 @@ class _TwonAppState extends State<TwonApp> with WidgetsBindingObserver {
       providers: [
         BlocProvider<AuthCubit>.value(value: auth),
         BlocProvider<ThemeCubit>.value(value: theme),
+        BlocProvider<PostEngagementCubit>.value(value: engagement),
       ],
       child: BlocBuilder<ThemeCubit, ThemeMode>(
         builder: (_, mode) => MaterialApp.router(
@@ -405,6 +419,15 @@ class AppShell extends StatelessWidget {
           ),
         ),
       ),
+      floatingActionButton: path == '/messages'
+          ? FloatingActionButton(
+              tooltip: 'New message',
+              backgroundColor: scheme.primary,
+              foregroundColor: scheme.onPrimary,
+              onPressed: () => c.push('/messages/new'),
+              child: const Icon(Icons.add_rounded),
+            )
+          : null,
       drawer: TwonDrawer(path: path),
       body: SafeArea(top: false, bottom: !primary, child: child),
       bottomNavigationBar: primary

@@ -52,7 +52,9 @@ class FeatureForm extends StatefulWidget {
     this.onSuccess,
     this.button = 'Save',
     this.description,
+    this.embedded = false,
   });
+  final bool embedded;
   final String title, button;
   final String? description;
   final List<FieldSpec> fields;
@@ -203,14 +205,37 @@ class _FeatureFormState extends State<FeatureForm> {
           widget.onSuccess?.call(s.result);
         }
       },
-      builder: (c, s) => SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+      builder: (c, s) => _formContainer(
         child: Form(
           key: form,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              PageHeading(widget.title, widget.description ?? ''),
+              if (widget.embedded)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 28),
+                  child: Column(
+                    children: [
+                      Text(
+                        widget.title,
+                        textAlign: TextAlign.center,
+                        style: Theme.of(c).textTheme.headlineSmall,
+                      ),
+                      if (widget.description != null) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          widget.description!,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Theme.of(c).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                )
+              else
+                PageHeading(widget.title, widget.description ?? ''),
               ...widget.fields.map(
                 (f) => Padding(
                   padding: const EdgeInsets.only(bottom: 20),
@@ -282,6 +307,10 @@ class _FeatureFormState extends State<FeatureForm> {
       ),
     ),
   );
+  Widget _formContainer({required Widget child}) => widget.embedded
+      ? child
+      : SingleChildScrollView(padding: const EdgeInsets.all(20), child: child);
+
   Widget buildField(FieldSpec f, bool busy) {
     final label = '${f.label}${f.required ? '' : ' (optional)'}';
     if (f.kind == FieldKind.toggle) {
@@ -354,6 +383,9 @@ class _FeatureFormState extends State<FeatureForm> {
     final date = f.kind == FieldKind.date, time = f.kind == FieldKind.time;
     return TextFormField(
       controller: controllers[f.key],
+      onTapOutside: widget.embedded
+          ? (_) => FocusManager.instance.primaryFocus?.unfocus()
+          : null,
       enabled: !busy,
       readOnly: date || time,
       obscureText: f.kind == FieldKind.password,

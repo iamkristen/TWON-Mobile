@@ -13,7 +13,19 @@ flutter run --dart-define-from-file=config/env.android.local.json
 flutter run --dart-define-from-file=config/env.ios.local.json
 ```
 
-Start TWON-backend on port 5001 and TWON-WebApp on port 3000. Android emulator uses 10.0.2.2 to reach the computer. iOS simulator uses localhost. On a physical phone, change all three hostnames to the computer's local hostname/IP, bind the servers to the network interface and use the same Wi-Fi. Website URL must be reachable from the phone's browser too. For browser checkout on a physical phone, configure the website's NEXT_PUBLIC_API_URL to reach the same backend over the network; localhost in that browser points to the phone. Android allows HTTP only in debug. Release requires explicit HTTPS API_BASE_URL and HTTPS WEBSITE_URL.
+Start TWON-backend on port 5001 and TWON-WebApp on port 3000. The default development host is `192.168.0.184`, reachable by physical devices on the same Wi-Fi. API, Socket.IO and website URLs all derive from this host. The iOS local-network permission and local HTTP exception are already configured; Android allows HTTP in debug only.
+
+For a physical iPhone or Android phone, select **TWON: Physical device (local backend)** in VS Code, or run:
+
+```sh
+flutter run --dart-define-from-file=config/env.device.local.json
+```
+
+Allow TWON's Local Network permission on iPhone (Settings → Privacy & Security → Local Network). Fully stop and relaunch/rebuild the app after changing configuration; hot reload does not update compile-time settings. Existing simulator config files intentionally override the device host, so do not use those when launching a physical phone.
+
+For another computer, edit `DEV_HOST` in `config/env.device.local.json`. Use the Mac's current LAN IP, since some Android devices cannot resolve `.local` names (for example `flutter run --dart-define=DEV_HOST=192.168.0.184`). Both devices must be on the same network, without client isolation, and the Mac must allow incoming backend connections. You can check connectivity from the phone's browser at `http://192.168.0.184:5001/api/v1/health`.
+
+Android emulator config uses 10.0.2.2; iOS simulator config uses localhost. Explicit API_BASE_URL, SOCKET_URL and WEBSITE_URL still override derived values. For browser checkout on a physical phone, configure the website's NEXT_PUBLIC_API_URL to reach the same backend over the network too. Release builds still require an explicit HTTPS API_BASE_URL and HTTPS WEBSITE_URL.
 
 ## Website payments only
 

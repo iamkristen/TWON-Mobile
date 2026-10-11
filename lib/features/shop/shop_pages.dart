@@ -107,16 +107,21 @@ class _ShopBodyState extends State<ShopBody> with WidgetsBindingObserver {
               ),
             ),
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              children: [
-                for (final value in categories)
-                  ChoiceChip(
-                    label: Text(value),
-                    selected: category == value,
-                    onSelected: (_) => setState(() => category = value),
-                  ),
-              ],
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final value in categories)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(value),
+                        selected: category == value,
+                        onSelected: (_) => setState(() => category = value),
+                      ),
+                    ),
+                ],
+              ),
             ),
             if (s.loading)
               const Center(child: CircularProgressIndicator())

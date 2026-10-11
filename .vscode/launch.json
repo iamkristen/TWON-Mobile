@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "TWON: Physical device (local backend)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "args": ["--dart-define-from-file=config/env.device.local.json"]
+    },
+    {
+      "name": "TWON: iOS simulator",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "args": ["--dart-define-from-file=config/env.ios.local.json"]
+    },
+    {
+      "name": "TWON: Android emulator",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "args": ["--dart-define-from-file=config/env.android.local.json"]
+    }
+  ]
+}

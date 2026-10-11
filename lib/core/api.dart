@@ -200,7 +200,17 @@ class DioRepository implements AppRepository {
       final response = await dio.post(
         'media/upload',
         data: FormData.fromMap({
-          'file': await MultipartFile.fromFile(path, filename: fileName),
+          'file': await MultipartFile.fromFile(
+            path,
+            filename: fileName,
+            contentType: switch ((fileName ?? path).split('.').last.toLowerCase()) {
+              'jpg' || 'jpeg' => DioMediaType.parse('image/jpeg'),
+              'png' => DioMediaType.parse('image/png'),
+              'webp' => DioMediaType.parse('image/webp'),
+              'gif' => DioMediaType.parse('image/gif'),
+              _ => null,
+            },
+          ),
         }),
         onSendProgress: progress,
       );

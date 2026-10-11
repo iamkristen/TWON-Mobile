@@ -284,12 +284,12 @@ void main() {
     (tester) async {
       final h = Harness();
       await h.mount(tester);
-      await tester.ensureVisible(find.text('Like').first);
+      await tester.ensureVisible(find.byTooltip('Like').first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Like').first);
+      await tester.tap(find.byTooltip('Like').first);
       await tester.pumpAndSettle();
-      expect(find.text('Liked'), findsOneWidget);
-      expect(find.text('25 likes'), findsOneWidget);
+      expect(find.byTooltip('Liked'), findsOneWidget);
+      expect(find.text('25'), findsOneWidget);
       expect(find.text('Pack member'), findsNothing);
       expect(
         h.calls.where((r) => r.path == 'posts' && r.method == 'GET').length,
@@ -309,12 +309,12 @@ void main() {
     (tester) async {
       final h = Harness(likeFails: true);
       await h.mount(tester);
-      await tester.ensureVisible(find.text('Like').first);
+      await tester.ensureVisible(find.byTooltip('Like').first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Like').first);
+      await tester.tap(find.byTooltip('Like').first);
       await tester.pumpAndSettle();
-      expect(find.text('Liked'), findsNothing);
-      expect(find.text('24 likes'), findsWidgets);
+      expect(find.byTooltip('Liked'), findsNothing);
+      expect(find.text('24'), findsWidgets);
       expect(find.text('Connection interrupted'), findsOneWidget);
       await h.close(tester);
     },

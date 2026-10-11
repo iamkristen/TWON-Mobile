@@ -28,25 +28,24 @@ class AuthPage extends StatelessWidget {
                 return const Center(child: CircularProgressIndicator());
               }
               if (state.status == AuthStatus.twoFactor) {
-                return Column(
+                return _AuthCard(
                   children: [
                     if (state.error != null) ErrorPanel(state.error!),
-                    Expanded(
-                      child: FeatureForm(
-                        title: 'One more step',
-                        description:
-                            'Enter your authenticator code or a recovery code.',
-                        fields: const [
-                          FieldSpec(
-                            'code',
-                            'Authenticator or recovery code',
-                            maxLength: 9,
-                          ),
-                        ],
-                        button: 'Verify and sign in',
-                        submit: (v) => auth.completeTwoFactor(v['code']),
-                        onSuccess: (_) {},
-                      ),
+                    FeatureForm(
+                      embedded: true,
+                      title: 'One more step',
+                      description:
+                          'Enter your authenticator code or a recovery code.',
+                      fields: const [
+                        FieldSpec(
+                          'code',
+                          'Authenticator or recovery code',
+                          maxLength: 9,
+                        ),
+                      ],
+                      button: 'Verify and sign in',
+                      submit: (v) => auth.completeTwoFactor(v['code']),
+                      onSuccess: (_) {},
                     ),
                     TextButton(
                       onPressed: auth.cancelChallenge,
@@ -129,12 +128,8 @@ class AuthPage extends StatelessWidget {
                     FieldSpec('password', 'Password', kind: FieldKind.password),
                   ]);
               }
-              return Column(
+              return _AuthCard(
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.only(top: 24),
-                    child: Image.asset('assets/branding/logo.png', height: 70),
-                  ),
                   if (mode == 'login' && state.error != null)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -143,49 +138,52 @@ class AuthPage extends StatelessWidget {
                         style: TextStyle(color: Theme.of(c).colorScheme.error),
                       ),
                     ),
-                  Expanded(
-                    child: FeatureForm(
-                      key: ValueKey(mode),
-                      title: title,
-                      description: description,
-                      fields: fields,
-                      button: button,
-                      submit: (v) async {
-                        if (mode == 'login') {
-                          await auth.login(v['email'], v['password']);
-                          return null;
+                  FeatureForm(
+                    embedded: true,
+                    key: ValueKey(mode),
+                    title: title,
+                    description: description,
+                    fields: fields,
+                    button: button,
+                    submit: (v) async {
+                      if (mode == 'login') {
+                        await auth.login(v['email'], v['password']);
+                        return null;
+                      }
+                      final path = switch (mode) {
+                        'signup' => 'signup',
+                        'verify' => 'verify-email',
+                        'forgot' => 'forgot-password',
+                        'reset' => 'reset-password',
+                        'cancel-deletion' => 'cancel-deletion',
+                        _ => 'login',
+                      };
+                      final result = await api.request(
+                        'auth/$path',
+                        method: 'POST',
+                        body: v,
+                        authenticated: false,
+                      );
+                      if (c.mounted) {
+                        if (mode == 'signup') {
+                          c.go(
+                            '/auth/verify?email=${Uri.encodeComponent(v['email'])}',
+                          );
+                        } else {
+                          notice(
+                            c,
+                            mode == 'forgot'
+                                ? 'If an account exists for this email, a password reset link has been sent.'
+                                : asJson(result)['message']?.toString() ??
+                                      'Done.',
+                          );
+                          c.go('/auth/login');
                         }
-                        final path = switch (mode) {
-                          'signup' => 'signup',
-                          'verify' => 'verify-email',
-                          'forgot' => 'forgot-password',
-                          'reset' => 'reset-password',
-                          'cancel-deletion' => 'cancel-deletion',
-                          _ => 'login',
-                        };
-                        final result = await api.request(
-                          'auth/$path',
-                          method: 'POST',
-                          body: v,
-                          authenticated: false,
-                        );
-                        if (c.mounted) {
-                          if (mode == 'signup') {
-                            c.go(
-                              '/auth/verify?email=${Uri.encodeComponent(v['email'])}',
-                            );
-                          } else {
-                            notice(
-                              c,
-                              asJson(result)['message']?.toString() ?? 'Done.',
-                            );
-                            if (mode != 'forgot') c.go('/auth/login');
-                          }
-                        }
-                        return result;
-                      },
-                    ),
+                      }
+                      return result;
+                    },
                   ),
+                  const SizedBox(height: 16),
                   Wrap(
                     alignment: WrapAlignment.center,
                     children: [
@@ -197,10 +195,6 @@ class AuthPage extends StatelessWidget {
                         TextButton(
                           onPressed: () => c.go('/auth/signup'),
                           child: const Text('Join the pack'),
-                        ),
-                        TextButton(
-                          onPressed: () => c.go('/auth/cancel-deletion'),
-                          child: const Text('Cancel deletion request'),
                         ),
                       ] else
                         TextButton(
@@ -226,6 +220,48 @@ class AuthPage extends StatelessWidget {
                 ],
               );
             },
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _AuthCard extends StatelessWidget {
+  const _AuthCard({required this.children});
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) => SingleChildScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minHeight: (constraints.maxHeight - 48).clamp(0, double.infinity),
+        ),
+        child: Center(
+          child: Card(
+            margin: EdgeInsets.zero,
+            elevation: 8,
+            shadowColor: Colors.black.withValues(alpha: .12),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Image.asset(
+                    'assets/branding/logo.png',
+                    height: 64,
+                    semanticLabel: 'TWON',
+                  ),
+                  const SizedBox(height: 24),
+                  ...children,
+                ],
+              ),
+            ),
           ),
         ),
       ),

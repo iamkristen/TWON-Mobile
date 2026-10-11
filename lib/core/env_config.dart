@@ -1,12 +1,16 @@
 import 'package:flutter/foundation.dart';
 
 class AppConfig {
+  // Physical phones must reach the development computer, not their own localhost.
+  // Override DEV_HOST when developing on another computer/network.
+  static const developmentHost = String.fromEnvironment(
+    'DEV_HOST',
+    defaultValue: '192.168.0.184',
+  );
   static const _definedApi = String.fromEnvironment('API_BASE_URL');
   static String get apiUrl => _definedApi.isNotEmpty
       ? _definedApi.replaceAll(RegExp(r'/+$'), '')
-      : (defaultTargetPlatform == TargetPlatform.android
-            ? 'http://10.0.2.2:5001/api/v1'
-            : 'http://localhost:5001/api/v1');
+      : 'http://$developmentHost:5001/api/v1';
   static String get socketUrl =>
       const String.fromEnvironment('SOCKET_URL').isNotEmpty
       ? const String.fromEnvironment('SOCKET_URL')
@@ -15,9 +19,7 @@ class AppConfig {
   static String get websiteUrl =>
       (_definedWebsite.isNotEmpty
               ? _definedWebsite
-              : defaultTargetPlatform == TargetPlatform.android
-              ? 'http://10.0.2.2:3000'
-              : 'http://localhost:3000')
+              : 'http://$developmentHost:3000')
           .replaceAll(RegExp(r'/+$'), '');
   static String paymentUrl({required String currency, String? orderId}) =>
       Uri.parse('$websiteUrl/merch/pay')
