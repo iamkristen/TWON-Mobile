@@ -1,0 +1,23 @@
+# Flutter CI (pre-launch). Prepared, not yet run.
+name: mobile-ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.5
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # 3 known infos (pre-existing); warnings and errors fail the job.
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
