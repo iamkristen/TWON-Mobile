@@ -23,7 +23,14 @@ class SettingsPage extends StatelessWidget {
               initialValue: mode,
               decoration: const InputDecoration(labelText: 'Appearance'),
               items: ThemeMode.values
-                  .map((v) => DropdownMenuItem(value: v, child: Text(v.name)))
+                  .map(
+                    (v) => DropdownMenuItem(
+                      value: v,
+                      child: Text(
+                        v.name[0].toUpperCase() + v.name.substring(1),
+                      ),
+                    ),
+                  )
                   .toList(),
               onChanged: (v) => d.read<ThemeCubit>().change(v!),
             ),
@@ -34,38 +41,40 @@ class SettingsPage extends StatelessWidget {
         child: Column(
           children:
               [
-                    (
-                      Icons.notifications_outlined,
-                      'Notifications & privacy',
-                      '/settings/preferences',
-                    ),
-                    (Icons.lock_outline, 'Password', '/settings/password'),
-                    (
-                      Icons.verified_user_outlined,
-                      'Two-step verification',
-                      '/settings/2fa',
-                    ),
-                    (
-                      Icons.devices_outlined,
-                      'Signed-in devices',
-                      '/settings/sessions',
-                    ),
-                    (Icons.support_agent, 'Support', '/support'),
-                    (
-                      Icons.person_remove_outlined,
-                      'Account deletion',
-                      '/settings/deletion',
-                    ),
-                  ]
-                  .map(
-                    (row) => ListTile(
-                      leading: Icon(row.$1),
-                      title: Text(row.$2),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => c.push(row.$3),
-                    ),
-                  )
-                  .toList(),
+                (
+                  Icons.notifications_outlined,
+                  'Notifications & privacy',
+                  '/settings/preferences',
+                ),
+                (Icons.lock_outline, 'Password', '/settings/password'),
+                (
+                  Icons.verified_user_outlined,
+                  'Two-step verification',
+                  '/settings/2fa',
+                ),
+                (
+                  Icons.devices_outlined,
+                  'Signed-in devices',
+                  '/settings/sessions',
+                ),
+                (Icons.support_agent, 'Support', '/support'),
+                (
+                  Icons.person_remove_outlined,
+                  'Account deletion',
+                  '/settings/deletion',
+                ),
+              ].map((row) {
+                // Account deletion is destructive: shown in the error
+                // colour so it never reads like an ordinary setting.
+                final danger = row.$3 == '/settings/deletion';
+                final color = danger ? Theme.of(c).colorScheme.error : null;
+                return ListTile(
+                  leading: Icon(row.$1, color: color),
+                  title: Text(row.$2, style: TextStyle(color: color)),
+                  trailing: Icon(Icons.chevron_right, color: color),
+                  onTap: () => c.push(row.$3),
+                );
+              }).toList(),
         ),
       ),
       ActionButton(
@@ -204,9 +213,9 @@ class SessionsPage extends StatelessWidget {
           tonal: true,
           confirmation:
               'Sign this session out? This can include your current device.',
-          action: () => repository(
-            c,
-          ).request('auth/sessions/${s.text('jti')}', method: 'DELETE'),
+          // SEC-021: the stable session id; older servers only list the jti.
+          action: () =>
+              repository(c).request(sessionRevokePath(s), method: 'DELETE'),
           onSuccess: (_) => r(),
         ),
       ),
@@ -224,6 +233,9 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
   Json? setup;
   List<String> recovery = [];
   int revision = 0;
+  // SEC-007: setup and enable both need the current password. Entered once for
+  // setup, kept only in memory for the confirming step, then cleared.
+  String? setupPassword;
   @override
   Widget build(BuildContext c) => ResourcePanel(
     key: ValueKey(revision),
@@ -252,7 +264,10 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
               description: 'You will need to sign in again afterwards.',
               fields: const [
                 FieldSpec('password', 'Password', kind: FieldKind.password),
-                FieldSpec('token', 'Authenticator or recovery code'),
+                FieldSpec(
+                  'token',
+                  'Authenticator code or recovery code (XXXX-XXXX)',
+                ),
               ],
               submit: (v) => repository(
                 c,
@@ -263,11 +278,27 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
             ),
           )
         else if (setup == null)
-          ActionButton(
-            label: 'Set up authenticator',
-            action: () =>
-                repository(c).request('auth/2fa/setup', method: 'POST'),
-            onSuccess: (v) => setState(() => setup = asJson(v)),
+          SizedBox(
+            height: 320,
+            child: FeatureForm(
+              title: 'Set up authenticator',
+              description: 'Confirm your password to start.',
+              button: 'Continue',
+              fields: const [
+                FieldSpec(
+                  'currentPassword',
+                  'Current password',
+                  kind: FieldKind.password,
+                ),
+              ],
+              submit: (v) {
+                setupPassword = v['currentPassword'] as String?;
+                return repository(
+                  c,
+                ).request('auth/2fa/setup', method: 'POST', body: v);
+              },
+              onSuccess: (v) => setState(() => setup = asJson(v)),
+            ),
           )
         else ...[
           Center(
@@ -290,14 +321,23 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
               fields: const [
                 FieldSpec('token', 'Six-digit code', maxLength: 6),
               ],
-              submit: (v) => repository(
-                c,
-              ).request('auth/2fa/enable', method: 'POST', body: v),
-              onSuccess: (v) => setState(() {
-                recovery = List<String>.from(asJson(v)['recoveryCodes'] ?? []);
-                setup = null;
-                revision++;
-              }),
+              submit: (v) => repository(c).request(
+                'auth/2fa/enable',
+                method: 'POST',
+                body: {...v, 'currentPassword': setupPassword ?? ''},
+              ),
+              onSuccess: (v) async {
+                final result = asJson(v);
+                // Every earlier session ended; keep this device signed in.
+                await c.read<AuthCubit>().accept(result);
+                if (!mounted) return;
+                setState(() {
+                  recovery = List<String>.from(result['recoveryCodes'] ?? []);
+                  setup = null;
+                  setupPassword = null;
+                  revision++;
+                });
+              },
             ),
           ),
         ],
@@ -327,28 +367,62 @@ class DeletionPage extends StatelessWidget {
             'Request deletion only if you want to close your TWON account. You can cancel until the request is processed.',
           ),
           const SizedBox(height: 24),
-          ActionButton(
-            label: pending
-                ? 'Cancel deletion request'
-                : 'Request account deletion',
-            confirmation: pending
-                ? 'Keep your account and cancel deletion?'
-                : 'Request account deletion? You will be signed out.',
-            action: () => repository(c).request(
-              'users/me/delete-request',
-              method: pending ? 'DELETE' : 'POST',
-            ),
-            onSuccess: (_) async {
-              if (pending) {
+          if (pending)
+            ActionButton(
+              label: 'Cancel deletion request',
+              confirmation: 'Keep your account and cancel deletion?',
+              action: () => repository(
+                c,
+              ).request('users/me/delete-request', method: 'DELETE'),
+              onSuccess: (_) async {
                 r();
                 await c.read<AuthCubit>().refreshProfile();
-              } else {
-                await c.read<AuthCubit>().logout();
-              }
-            },
-          ),
+              },
+            )
+          else
+            // SEC-020: confirmed with the password and, with 2FA on, a code.
+            FeatureForm(
+              embedded: true,
+              title: 'Request account deletion',
+              description: 'Confirm it is you. You will be signed out.',
+              button: 'Request account deletion',
+              fields: [
+                const FieldSpec(
+                  'currentPassword',
+                  'Current password',
+                  kind: FieldKind.password,
+                ),
+                if (user.flag('twoFactorEnabled'))
+                  const FieldSpec(
+                    'token',
+                    'Authenticator code or recovery code (XXXX-XXXX)',
+                    maxLength: 9,
+                  ),
+              ],
+              submit: (v) => repository(c).request(
+                'users/me/delete-request',
+                method: 'POST',
+                body: deletionRequestBody(v),
+              ),
+              onSuccess: (_) => c.read<AuthCubit>().logout(),
+            ),
         ],
       );
     },
   );
+}
+
+/// SEC-020: the deletion request body; the code is sent only when entered.
+Json deletionRequestBody(Json values) {
+  final token = '${values['token'] ?? ''}'.trim();
+  return {
+    'currentPassword': '${values['currentPassword'] ?? ''}',
+    if (token.isNotEmpty) 'token': token,
+  };
+}
+
+/// SEC-021: devices are revoked by their stable session id; older servers list only the jti.
+String sessionRevokePath(Entity session) {
+  final id = session.text('id');
+  return 'auth/sessions/${id.isEmpty ? session.text('jti') : id}';
 }

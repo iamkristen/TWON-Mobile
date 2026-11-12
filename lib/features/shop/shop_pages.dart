@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../core/theme.dart';
 import '../../core/models.dart';
 import '../../core/env_config.dart';
 import '../../shared/widgets.dart';
@@ -115,7 +116,7 @@ class _ShopBodyState extends State<ShopBody> with WidgetsBindingObserver {
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
                       child: ChoiceChip(
-                        label: Text(value),
+                        label: Text(value == 'all' ? 'All' : value),
                         selected: category == value,
                         onSelected: (_) => setState(() => category = value),
                       ),
@@ -291,6 +292,7 @@ class _SearchCurrencyBar extends StatelessWidget {
         const SizedBox(width: 8),
         IconButton.filled(
           tooltip: 'Open basket',
+          style: TwonButtonStyles.filledIcon(),
           onPressed: busy ? null : onBasketTap,
           icon: Badge(
             label: Text('$basketCount'),

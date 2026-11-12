@@ -33,8 +33,15 @@ class FieldSpec {
     this.initial,
     this.maxLength,
     this.hint,
+    this.uploadEndpoint = 'media/upload',
+    this.uploadReferenceKey,
   });
   final String key, label;
+  /// Upload route for image/file fields (identity documents use a private one).
+  final String uploadEndpoint;
+  /// When set, the field value is this key of the upload result (a stable
+  /// reference) and `url` is only a short-lived preview.
+  final String? uploadReferenceKey;
   final FieldKind kind;
   final bool required;
   final List<String> options;
@@ -67,6 +74,8 @@ class FeatureForm extends StatefulWidget {
 class _FeatureFormState extends State<FeatureForm> {
   final form = GlobalKey<FormState>();
   final values = <String, dynamic>{};
+  /// Short-lived preview URLs for fields that submit a reference instead.
+  final previews = <String, String>{};
   final controllers = <String, TextEditingController>{};
   final mutation = MutationCubit();
   bool uploadBusy = false;
@@ -167,6 +176,7 @@ class _FeatureFormState extends State<FeatureForm> {
         final api = repository(context);
         final result = await api.upload(
           path,
+          endpoint: f.uploadEndpoint,
           progress: (sent, total) {
             if (mounted) {
               setState(() => progress = total > 0 ? sent / total : null);
@@ -174,9 +184,16 @@ class _FeatureFormState extends State<FeatureForm> {
           },
         );
         if (!mounted) return;
+        final refKey = f.uploadReferenceKey;
+        if (refKey != null && result[refKey] is! String) {
+          throw const AppFailure('Upload failed. Please select the file again.');
+        }
+        setState(() {
+          if (refKey != null) previews[f.key] = result['url']?.toString() ?? '';
+        });
         setState(
           () => values[f.key] = f.kind == FieldKind.image
-              ? result['url']
+              ? (refKey != null ? result[refKey] : result['url'])
               : ([
                   ...List<String>.from(values[f.key] as List),
                   result['url'] as String,
@@ -351,17 +368,24 @@ class _FeatureFormState extends State<FeatureForm> {
                 contentPadding: EdgeInsets.zero,
                 title: Text('Attachment ${e.key + 1}'),
                 leading: f.kind != FieldKind.files
-                    ? BrandImage(e.value, height: 48, width: 48)
+                    ? BrandImage(
+                        f.kind == FieldKind.image
+                            ? (previews[f.key] ?? e.value)
+                            : e.value,
+                        height: 48,
+                        width: 48,
+                      )
                     : const Icon(Icons.attach_file),
                 trailing: IconButton(
                   tooltip: 'Remove attachment',
                   onPressed: uploadBusy || busy
                       ? null
-                      : () => setState(
-                          () => values[f.key] = f.kind == FieldKind.image
+                      : () => setState(() {
+                          previews.remove(f.key);
+                          values[f.key] = f.kind == FieldKind.image
                               ? ''
-                              : urls.where((u) => u != e.value).toList(),
-                        ),
+                              : urls.where((u) => u != e.value).toList();
+                        }),
                   icon: const Icon(Icons.close),
                 ),
               ),

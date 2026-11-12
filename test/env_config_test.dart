@@ -20,4 +20,13 @@ void main() {
     );
     expect(AppConfig.validate, returnsNormally);
   });
+
+  // Pre-launch: release builds never send tokens over cleartext sockets.
+  test('release builds require an HTTPS socket origin', () {
+    expect(() => AppConfig.validateSocketUrl('http://api.twon.example', release: true), throwsStateError);
+    expect(() => AppConfig.validateSocketUrl('ws://api.twon.example', release: true), throwsStateError);
+    expect(() => AppConfig.validateSocketUrl('not a url', release: true), throwsStateError);
+    expect(() => AppConfig.validateSocketUrl('https://api.twon.example', release: true), returnsNormally);
+    expect(() => AppConfig.validateSocketUrl('http://10.0.2.2:5001', release: false), returnsNormally);
+  });
 }

@@ -19,6 +19,8 @@ import 'features/shop/shop_pages.dart';
 import 'features/account/account_pages.dart';
 import 'features/account/settings_pages.dart';
 import 'shared/widgets.dart';
+import 'shared/brand_motion.dart';
+import 'features/points/points_pages.dart';
 
 class TwonApp extends StatefulWidget {
   const TwonApp({super.key, required this.api, required this.preferences});
@@ -136,11 +138,7 @@ GoRouter _router(AuthCubit auth, Listenable refresh) {
       body: ErrorPanel('This page is unavailable.', retry: () => c.go('/feed')),
     ),
     routes: [
-      GoRoute(
-        path: '/starting',
-        builder: (_, _) =>
-            const Scaffold(body: Center(child: CircularProgressIndicator())),
-      ),
+      GoRoute(path: '/starting', builder: (_, _) => const TwonSplash()),
       GoRoute(
         path: '/auth/:mode',
         builder: (_, s) => AuthPage(
@@ -285,6 +283,7 @@ GoRouter _router(AuthCubit auth, Listenable refresh) {
             ),
           ),
           GoRoute(path: '/orders', builder: (_, _) => const OrdersPage()),
+          GoRoute(path: '/points', builder: (_, _) => const PointsPage()),
           GoRoute(path: '/lookbook', builder: (_, _) => const LookbookPage()),
           GoRoute(
             path: '/lookbook/new',
@@ -303,7 +302,12 @@ GoRouter _router(AuthCubit auth, Listenable refresh) {
             path: '/members/:id/posts',
             builder: (_, s) => ProfilePostsPage(s.pathParameters['id']!),
           ),
-          GoRoute(path: '/search', builder: (_, _) => const SearchPage()),
+          GoRoute(
+            path: '/search',
+            builder: (_, state) => SearchPage(
+              initialQuery: state.uri.queryParameters['q'] ?? '',
+            ),
+          ),
           GoRoute(
             path: '/notifications',
             builder: (_, _) => const NotificationsPage(),
@@ -461,13 +465,11 @@ class SocialBottomBar extends StatelessWidget {
   Widget build(BuildContext c) {
     final scheme = Theme.of(c).colorScheme;
     final reduceMotion = MediaQuery.disableAnimationsOf(c);
-    final duration = reduceMotion
-        ? Duration.zero
-        : const Duration(milliseconds: 340);
-    final curve = reduceMotion ? Curves.linear : Curves.easeOutCubic;
-    // A touch of overshoot makes the pill feel like it is being flicked
-    // rather than teleported, but only when motion is welcome.
-    final spring = reduceMotion ? Curves.linear : Curves.easeOutBack;
+    // Shared Wolf motion: the same duration and easing as page transitions
+    // and buttons, so the pill glides rather than bounces.
+    final duration = TwonMotion.of(c, TwonMotion.slow);
+    final curve = reduceMotion ? Curves.linear : TwonMotion.curve;
+    final spring = curve;
 
     final count = AppShell.destinations.length;
     // -1..1 across the track, so each tab centre maps to a slot.
@@ -484,7 +486,9 @@ class SocialBottomBar extends StatelessWidget {
             color: scheme.surface,
             borderRadius: BorderRadius.circular(26),
             border: Border.all(
-              color: scheme.outlineVariant.withValues(alpha: .45),
+              color: Theme.of(c).brightness == Brightness.dark
+                  ? TwonPalette.moonBlue.withValues(alpha: .18)
+                  : scheme.outlineVariant.withValues(alpha: .45),
             ),
             boxShadow: [
               BoxShadow(
@@ -518,6 +522,9 @@ class SocialBottomBar extends StatelessWidget {
                         decoration: BoxDecoration(
                           color: scheme.primary.withValues(alpha: .13),
                           borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: scheme.primary.withValues(alpha: .18),
+                          ),
                         ),
                       ),
                     ),
@@ -550,7 +557,7 @@ class SocialBottomBar extends StatelessWidget {
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   AnimatedScale(
-                                    scale: selected ? 1.14 : 1,
+                                    scale: selected ? 1.1 : 1,
                                     duration: duration,
                                     curve: spring,
                                     child: Icon(
@@ -785,6 +792,12 @@ class _TwonDrawerState extends State<TwonDrawer>
                 ('/merch', 'Shop & basket', Icons.storefront_outlined),
                 ('/orders', 'My orders', Icons.receipt_long_outlined),
                 ('/lookbook', 'Lookbook', Icons.photo_library_outlined),
+              ]),
+            ),
+            const SizedBox(height: 14),
+            enter(
+              _group(c, 'Pack Points', Icons.military_tech_outlined, [
+                ('/points', 'Points & rankings', Icons.leaderboard_outlined),
               ]),
             ),
             const SizedBox(height: 14),

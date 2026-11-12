@@ -12,6 +12,7 @@ import 'package:visibility_detector/visibility_detector.dart';
 import '../../core/models.dart';
 import '../../core/env_config.dart';
 import '../../core/collection_cubit.dart';
+import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../../shared/forms.dart';
 import '../auth/auth_cubit.dart';
@@ -43,7 +44,7 @@ class FeedPage extends StatelessWidget {
       repository(d),
       'posts',
       query: {if (clanId != null) 'clanId': clanId},
-    )..load(),
+    )..load(cached: true),
     child: FeedTimeline(clanId: clanId),
   );
 }
@@ -63,10 +64,11 @@ class _FeedTimelineState extends State<FeedTimeline> {
     scroll.addListener(_nextPage);
   }
 
+  /// Prefetch the next page ~500 px before the end, a bounded number of times.
   void _nextPage() {
     if (scroll.hasClients && scroll.position.extentAfter < 500) {
       final cubit = context.read<CollectionCubit>();
-      if (cubit.state.error == null) cubit.load(more: true);
+      if (cubit.canAutoLoad) cubit.load(more: true);
     }
   }
 
@@ -675,11 +677,8 @@ class _PostCardState extends State<PostCard> {
                           style: Theme.of(c).textTheme.labelSmall,
                         ),
                         const SizedBox(height: 8),
-                        Text(
-                          asJson(
-                                post.data['sharedPostId'],
-                              )['body']?.toString() ??
-                              'Shared post',
+                        SocialPostText(
+                          text: asJson(post.data['sharedPostId'])['body']?.toString() ?? 'Shared post',
                         ),
                       ],
                     ),
@@ -963,6 +962,8 @@ class PostEditorState extends State<PostEditor> {
   bool uploading = false, saving = false, allowExit = false, prompting = false;
   String? error;
   double? uploadProgress;
+  /// Photo being uploaded (1-based) and the batch size, for the progress label.
+  int uploadIndex = 0, uploadTotal = 0;
   bool composerFocused = false;
   final bodyFocus = FocusNode();
   late final MentionCubit mentions;
@@ -1050,9 +1051,15 @@ class PostEditorState extends State<PostEditor> {
       setState(() {
         uploading = true;
         error = null;
+        uploadIndex = 0;
+        uploadTotal = selected.length;
       });
       final api = repository(context);
       for (final photo in selected) {
+        setState(() {
+          uploadIndex++;
+          uploadProgress = null;
+        });
         final result = await api.upload(
           photo.path,
           progress: (sent, total) {
@@ -1564,11 +1571,25 @@ class PostEditorState extends State<PostEditor> {
                               padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
                               child: Column(
                                 children: [
-                                  LinearProgressIndicator(
-                                    value: uploadProgress,
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(3),
+                                    child: LinearProgressIndicator(
+                                      value: uploadProgress,
+                                      minHeight: 5,
+                                    ),
                                   ),
                                   const SizedBox(height: 8),
-                                  const Text('Preparing your photos…'),
+                                  Semantics(
+                                    liveRegion: true,
+                                    child: Text(
+                                      uploadTotal > 1
+                                          ? 'Uploading photo $uploadIndex of $uploadTotal…'
+                                          : 'Uploading your photo…',
+                                      style: TextStyle(
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
@@ -1599,10 +1620,14 @@ class PostEditorState extends State<PostEditor> {
                           ListTile(
                             leading: const Icon(
                               Icons.photo_library_outlined,
-                              color: Color(0xff69c6af),
+                              color: TwonPalette.moonBlue,
                             ),
                             title: const Text('Add photos'),
-                            subtitle: const Text('Up to 5 photos'),
+                            subtitle: Text(
+                              composerPhotos.isEmpty
+                                  ? 'Up to 5 photos'
+                                  : '${composerPhotos.length} of 5 added',
+                            ),
                             trailing: const Icon(Icons.add_rounded),
                             onTap: uploading || saving ? null : addPhotos,
                           ),
@@ -1614,9 +1639,11 @@ class PostEditorState extends State<PostEditor> {
                             color: scheme.outlineVariant.withValues(alpha: .45),
                           ),
                         SwitchListTile.adaptive(
-                          secondary: const Icon(
+                          secondary: Icon(
                             Icons.masks_outlined,
-                            color: Color(0xffc7b1ff),
+                            color: anonymous
+                                ? scheme.primary
+                                : TwonPalette.moonBlue,
                           ),
                           title: Text(anonymous ? 'Incognito Mode' : 'Public Identity'),
                           subtitle: Text(anonymous ? 'Posting as Anonymous Wolf' : 'Post with your name and profile photo'),
@@ -1654,10 +1681,13 @@ class PostEditorState extends State<PostEditor> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       if (saving) ...[
-                        const SizedBox(
+                        SizedBox(
                           height: 18,
                           width: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: scheme.onSurfaceVariant,
+                          ),
                         ),
                         const SizedBox(width: 10),
                       ],
@@ -2309,13 +2339,13 @@ class _CommentsPaneState extends State<CommentsPane> {
                                 tooltip: 'Send reply',
                                 style: IconButton.styleFrom(
                                   backgroundColor: hasContent
-                                      ? Theme.of(c).colorScheme.primary
+                                      ? TwonPalette.crimson
                                       : Theme.of(c)
                                             .colorScheme
                                             .surfaceContainerHighest
                                             .withValues(alpha: 0.4),
                                   foregroundColor: hasContent
-                                      ? Theme.of(c).colorScheme.onPrimary
+                                      ? Colors.white
                                       : Theme.of(c).colorScheme.onSurfaceVariant
                                             .withValues(alpha: 0.35),
                                   minimumSize: const Size(36, 36),

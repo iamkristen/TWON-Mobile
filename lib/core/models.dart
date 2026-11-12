@@ -32,9 +32,12 @@ class ApiPage {
 }
 
 class AppFailure implements Exception {
-  const AppFailure(this.message, {this.code = '', this.status});
+  const AppFailure(this.message, {this.code = '', this.status, this.retryAfter});
   final String message, code;
   final int? status;
+
+  /// From a `Retry-After` header (e.g. on 429), when the server sent one.
+  final Duration? retryAfter;
   @override
   String toString() => message;
 }

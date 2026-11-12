@@ -12,7 +12,9 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../core/models.dart';
 import '../../core/realtime.dart';
+import '../../core/theme.dart';
 import '../../shared/widgets.dart';
+import '../../shared/brand_motion.dart';
 import '../../shared/forms.dart';
 import '../auth/auth_cubit.dart';
 import '../account/account_pages.dart';
@@ -25,6 +27,7 @@ class ConversationsPage extends StatelessWidget {
   Widget build(BuildContext c) => CollectionView(
     path: 'conversations',
     empty: 'Start a conversation with a pack member.',
+    emptyAsset: 'pack-gathering',
     builder: (d, row, r) {
       return ConversationTile(row: row);
     },
@@ -47,25 +50,58 @@ class ConversationTile extends StatelessWidget {
         : others
               .map((p) => p['fullName'] ?? p['handle'] ?? 'Member')
               .join(', ');
-    return ListTile(
-      contentPadding: const EdgeInsets.all(14),
-      leading: MemberAvatar(others.firstOrNull ?? {'fullName': title}),
-      title: Text(
-        title.isEmpty ? 'Pack chat' : title,
-        style: const TextStyle(fontWeight: FontWeight.bold),
+    final unread = row.number('unreadCount').toInt();
+    final scheme = Theme.of(c).colorScheme;
+    final time = shortTimeLabel(
+      row.object('lastMessage')['createdAt']?.toString() ?? '',
+    );
+    return UnreadSurface(
+      unread: unread > 0,
+      child: ListTile(
+        contentPadding: const EdgeInsets.fromLTRB(14, 8, 12, 8),
+        leading: MemberAvatar(others.firstOrNull ?? {'fullName': title}),
+        title: Text(
+          title.isEmpty ? 'Pack chat' : title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontWeight: unread > 0 ? FontWeight.w800 : FontWeight.w600,
+          ),
+        ),
+        subtitle: Text(
+          row.object('lastMessage')['text']?.toString() ?? 'Say hello',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: unread > 0 ? scheme.onSurface : scheme.onSurfaceVariant,
+            fontWeight: unread > 0 ? FontWeight.w600 : FontWeight.w400,
+          ),
+        ),
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (time.isNotEmpty)
+              Text(
+                time,
+                style: Theme.of(c).textTheme.labelSmall?.copyWith(
+                  color: unread > 0 ? scheme.primary : scheme.onSurfaceVariant,
+                  fontWeight: unread > 0 ? FontWeight.w800 : FontWeight.w500,
+                ),
+              ),
+            const SizedBox(height: 4),
+            unread > 0
+                ? CountPill(unread)
+                : Icon(
+                    Icons.chevron_right,
+                    size: 20,
+                    color: scheme.onSurfaceVariant,
+                  ),
+          ],
+        ),
+        onTap: onTap ?? () => c.push('/messages/${row.id}', extra: row.data),
       ),
-      subtitle: Text(
-        row.object('lastMessage')['text']?.toString() ?? 'Say hello',
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: row.number('unreadCount') > 0
-          ? Badge(
-              label: Text('${row.number('unreadCount')}'),
-              child: const Icon(Icons.chevron_right),
-            )
-          : const Icon(Icons.chevron_right),
-      onTap: onTap ?? () => c.push('/messages/${row.id}', extra: row.data),
     );
   }
 }
@@ -616,7 +652,9 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
           ),
           Expanded(
             child: s.loading && s.messages.isEmpty
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(
+                    child: MoonPulseLoader(label: 'Loading messages'),
+                  )
                 : ListView.builder(
                     reverse: true,
                     padding: const EdgeInsets.all(16),
@@ -657,7 +695,28 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                                 color: own
                                     ? Theme.of(c).colorScheme.primaryContainer
                                     : Theme.of(c).colorScheme.surfaceContainer,
-                                borderRadius: BorderRadius.circular(18),
+                                // A tighter corner on the sender's side marks
+                                // who spoke without extra chrome.
+                                borderRadius: BorderRadius.only(
+                                  topLeft: Radius.circular(own ? 18 : 6),
+                                  topRight: Radius.circular(own ? 6 : 18),
+                                  bottomLeft: const Radius.circular(18),
+                                  bottomRight: const Radius.circular(18),
+                                ),
+                                border: own
+                                    ? null
+                                    : Border.all(
+                                        color: TwonPalette.moonBlue.withValues(
+                                          alpha: .16,
+                                        ),
+                                      ),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Color(0x14071A33),
+                                    blurRadius: 3,
+                                    offset: Offset(0, 1),
+                                  ),
+                                ],
                               ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -738,11 +797,31 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                                           ).textTheme.labelSmall,
                                         ),
                                         if (own)
-                                          Icon(
-                                            message.strings('readBy').length > 1
-                                                ? Icons.done_all
-                                                : Icons.done,
-                                            size: 15,
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              left: 4,
+                                            ),
+                                            child: Icon(
+                                              message.strings('readBy').length >
+                                                      1
+                                                  ? Icons.done_all
+                                                  : Icons.done,
+                                              size: 15,
+                                              semanticLabel:
+                                                  message
+                                                          .strings('readBy')
+                                                          .length >
+                                                      1
+                                                  ? 'Read'
+                                                  : 'Sent',
+                                              color:
+                                                  message
+                                                          .strings('readBy')
+                                                          .length >
+                                                      1
+                                                  ? TwonPalette.moonBlue
+                                                  : null,
+                                            ),
                                           ),
                                         IconButton(
                                           tooltip: 'Reply or react',
@@ -791,7 +870,30 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                 icon: const Icon(Icons.close),
               ),
             ),
-          if (uploading) const LinearProgressIndicator(),
+          if (uploading || s.sending)
+            Semantics(
+              liveRegion: true,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(2),
+                        child: const LinearProgressIndicator(minHeight: 3),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      uploading ? 'Uploading attachment…' : 'Sending…',
+                      style: Theme.of(c).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(c).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           if (blocked)
             const Padding(
               padding: EdgeInsets.all(16),
@@ -846,6 +948,7 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                     ),
                     IconButton.filled(
                       tooltip: 'Send message',
+                      style: TwonButtonStyles.filledIcon(),
                       onPressed: s.sending || uploading || recording
                           ? null
                           : () {
@@ -864,13 +967,21 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                                 }),
                               );
                             },
-                      icon: s.sending
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.send),
+                      icon: AnimatedSwitcher(
+                        duration: TwonMotion.of(c, TwonMotion.fast),
+                        transitionBuilder: (child, a) =>
+                            ScaleTransition(scale: a, child: child),
+                        child: s.sending
+                            ? const SizedBox(
+                                key: ValueKey('sending'),
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.send, key: ValueKey('send')),
+                      ),
                     ),
                   ],
                 ),

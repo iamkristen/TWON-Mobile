@@ -66,6 +66,17 @@ class Harness {
         data = viewer;
       } else if (r.path == 'posts' && r.method == 'GET') {
         data = empty ? [] : List.generate(12, samplePost);
+      } else if (RegExp(r'^posts/[^/]+/comments/[^/]+/like$').hasMatch(r.path)) {
+        // As the API: a comment like answers with the post's comment list.
+        final listKey = r.path.substring(0, r.path.indexOf('/comments/') + '/comments'.length);
+        final commentId = r.path.split('/')[3];
+        final list = (fixtures[listKey] as List? ?? const []).map((c) => asJson(c)).toList();
+        data = [
+          for (final c in list)
+            c['id'] == commentId
+                ? {...c, 'likes': r.method == 'POST' ? ['viewer'] : [], 'likeCount': (c['likeCount'] as num) + (r.method == 'POST' ? 1 : -1)}
+                : c,
+        ];
       } else if (r.path.endsWith('/like')) {
         if (likeFails) {
           return ResponseBody.fromString(
@@ -85,6 +96,9 @@ class Harness {
           'likes': ['viewer'],
           'likeCount': 25,
         };
+      } else if (r.method == 'GET' && RegExp(r'^posts/post-\d+$').hasMatch(r.path)) {
+        // Authoritative re-read after an uncertain like outcome (Task 11).
+        data = samplePost(int.parse(r.path.split('-').last));
       } else if (r.path == 'posts' && r.method == 'POST') {
         data = {'id': 'published', ...asJson(r.data)};
       }
@@ -284,11 +298,11 @@ void main() {
     (tester) async {
       final h = Harness();
       await h.mount(tester);
-      await tester.ensureVisible(find.byTooltip('Like').first);
+      await tester.ensureVisible(find.byIcon(Icons.favorite_border_rounded).first);
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Like').first);
+      await tester.tap(find.byIcon(Icons.favorite_border_rounded).first);
       await tester.pumpAndSettle();
-      expect(find.byTooltip('Liked'), findsOneWidget);
+      expect(find.byIcon(Icons.favorite_rounded), findsOneWidget);
       expect(find.text('25'), findsOneWidget);
       expect(find.text('Pack member'), findsNothing);
       expect(
@@ -309,11 +323,11 @@ void main() {
     (tester) async {
       final h = Harness(likeFails: true);
       await h.mount(tester);
-      await tester.ensureVisible(find.byTooltip('Like').first);
+      await tester.ensureVisible(find.byIcon(Icons.favorite_border_rounded).first);
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Like').first);
+      await tester.tap(find.byIcon(Icons.favorite_border_rounded).first);
       await tester.pumpAndSettle();
-      expect(find.byTooltip('Liked'), findsNothing);
+      expect(find.byIcon(Icons.favorite_rounded), findsNothing);
       expect(find.text('24'), findsWidgets);
       expect(find.text('Connection interrupted'), findsOneWidget);
       await h.close(tester);
@@ -366,11 +380,13 @@ void main() {
       await h.mount(tester);
       await tester.tap(find.text('What’s on your mind?'));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Share anonymously'));
+      // Composer redesign: the identity switch reads "Public Identity" / "Incognito Mode".
+      await tester.ensureVisible(find.text('Public Identity'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Share anonymously'));
+      await tester.tap(find.text('Public Identity'));
       await tester.pumpAndSettle();
-      expect(find.text('Anonymous pack member'), findsOneWidget);
+      expect(find.text('Incognito Mode'), findsOneWidget);
+      expect(find.text('Anonymous Wolf'), findsOneWidget); // author preview
       await tester.enterText(
         find.byType(TextField).first,
         'A question without my name.',
@@ -747,7 +763,7 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.tap(find.byTooltip('Close post types'));
       await tester.pumpAndSettle();
-      expect(find.text('General'), findsOneWidget);
+      expect(find.text('General Howl'), findsOneWidget); // label of the unchanged 'general' type
       expect(find.text('Keep my draft.'), findsOneWidget);
       tester.platformDispatcher.clearAccessibilityFeaturesTestValue();
       await h.close(tester);

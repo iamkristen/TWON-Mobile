@@ -5,7 +5,7 @@ class AppConfig {
   // Override DEV_HOST when developing on another computer/network.
   static const developmentHost = String.fromEnvironment(
     'DEV_HOST',
-    defaultValue: '192.168.0.184',
+    defaultValue: 'Kristens-Mac-mini.local',
   );
   static const _definedApi = String.fromEnvironment('API_BASE_URL');
   static String get apiUrl => _definedApi.isNotEmpty
@@ -41,6 +41,20 @@ class AppConfig {
     if (kReleaseMode && (uri.scheme != 'https' || _definedApi.isEmpty)) {
       throw StateError(
         'Release builds require an explicit HTTPS API_BASE_URL.',
+      );
+    }
+    // Pre-launch: the realtime connection carries the access token too.
+    validateSocketUrl(socketUrl, release: kReleaseMode);
+  }
+
+  /// The socket origin must be HTTP(S); release builds require HTTPS (wss).
+  static void validateSocketUrl(String value, {required bool release}) {
+    final socket = Uri.parse(value);
+    if (!socket.hasAuthority ||
+        !['http', 'https'].contains(socket.scheme) ||
+        (release && socket.scheme != 'https')) {
+      throw StateError(
+        'SOCKET_URL must be HTTP(S), and HTTPS in release builds.',
       );
     }
   }

@@ -111,6 +111,16 @@ class AuthCubit extends Cubit<AuthState> {
         ),
       );
     } catch (error) {
+      // SEC-009: too many attempts or an already-used step: sign in again.
+      if (error is AppFailure && error.code == 'TWO_FACTOR_SESSION_EXPIRED') {
+        emit(
+          AuthState(
+            status: AuthStatus.signedOut,
+            error: 'That verification step expired. Sign in again.',
+          ),
+        );
+        return;
+      }
       emit(
         AuthState(
           status: AuthStatus.twoFactor,

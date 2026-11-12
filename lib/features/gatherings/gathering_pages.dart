@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
+import '../../core/theme.dart';
 import '../../core/models.dart';
 import '../../core/env_config.dart';
 import '../../shared/forms.dart';
 import '../../shared/widgets.dart';
 import '../auth/auth_cubit.dart';
+import '../../shared/csv.dart';
 
 class GatheringsPage extends StatefulWidget {
   const GatheringsPage({super.key});
@@ -65,6 +67,7 @@ class _GatheringsPageState extends State<GatheringsPage> {
                   myClan.object('membership')['canHostEvents'] == true
                   ? IconButton.filled(
                       tooltip: 'Publish gathering',
+                      style: TwonButtonStyles.filledIcon(),
                       onPressed: () => c.push('/events/new'),
                       icon: const Icon(Icons.add_rounded),
                     )
@@ -115,20 +118,32 @@ class _GatheringsPageState extends State<GatheringsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (event.text('image').isNotEmpty)
+                    if (event.text('image').isNotEmpty) ...[
                       BrandImage(event.text('image'), width: double.infinity),
-                    const SizedBox(height: 12),
+                      const SizedBox(height: 12),
+                    ],
+                    // Date first, in the brand accent: it is what people scan for.
+                    Text(
+                      '${dateLabel(event.text('date'))} · ${event.text('time')} UTC',
+                      style: Theme.of(c).textTheme.labelLarge?.copyWith(
+                        color: Theme.of(c).colorScheme.primary,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: .3,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
                     Text(
                       event.text('title'),
                       style: Theme.of(c).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    Text(
-                      '${dateLabel(event.text('date'))} · ${event.text('time')} UTC',
+                    const SizedBox(height: 8),
+                    _EventFact(Icons.place_outlined, event.text('location')),
+                    _EventFact(
+                      Icons.group_outlined,
+                      '${event.number('attendeeCount')} attending',
                     ),
-                    Text(event.text('location')),
-                    Text('${event.number('attendeeCount')} attending'),
                   ],
                 ),
               ),
@@ -301,8 +316,8 @@ class GatheringPage extends StatelessWidget {
                                   c,
                                 ).request('events/$id/attendees'),
                               );
-                              final csv =
-                                  'Name,Handle,Email\n${attendees.map((r) => [r['fullName'], r['handle'], r['email']].map((s) => '"${s?.toString().replaceAll('"', '""') ?? ''}"').join(',')).join('\n')}';
+                              // SEC-012: no contact data; formula-safe CSV.
+                              final csv = attendeeCsv(attendees);
                               await SharePlus.instance.share(
                                 ShareParams(
                                   text: csv,
@@ -392,4 +407,27 @@ class GatheringEditor extends StatelessWidget {
     },
     onSuccess: (_) => c.pop(),
   );
+}
+
+/// One muted icon + text line on a gathering card (location, attendance).
+class _EventFact extends StatelessWidget {
+  const _EventFact(this.icon, this.text);
+  final IconData icon;
+  final String text;
+  @override
+  Widget build(BuildContext c) {
+    final muted = Theme.of(c).colorScheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: muted),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(text, style: TextStyle(color: muted)),
+          ),
+        ],
+      ),
+    );
+  }
 }

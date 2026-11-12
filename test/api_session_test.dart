@@ -125,4 +125,44 @@ void main() {
     await api.expired.close();
     await api.tokensChanged.close();
   });
+
+  test('a rate-limited refresh keeps the session and waits out Retry-After (F-26)', () async {
+    final store = MemoryStore();
+    final api = DioRepository(baseUrl: 'https://test.invalid', store: store);
+    var refreshes = 0;
+    api.dio.httpClientAdapter = ApiAdapter((r) async {
+      if (r.path == 'auth/refresh') {
+        refreshes++;
+        return ResponseBody.fromString(
+          jsonEncode({
+            'success': false,
+            'error': {'code': 'RATE_LIMITED', 'message': 'Too many requests'},
+          }),
+          429,
+          headers: {
+            Headers.contentTypeHeader: ['application/json'],
+            'retry-after': ['20'],
+          },
+        );
+      }
+      return response(401, {
+        'success': false,
+        'error': {'message': 'Expired'},
+      });
+    });
+    await api.saveSession({'accessToken': 'old', 'refreshToken': 'valid'});
+    for (var i = 0; i < 4; i++) {
+      await expectLater(api.request('users/me'), throwsA(isA<AppFailure>()));
+    }
+    expect(refreshes, 1); // no immediate retries while Retry-After lasts
+    expect(store.value!['refreshToken'], 'valid'); // credentials kept
+    await expectLater(
+      api.refreshSession(),
+      throwsA(isA<AppFailure>().having((e) => e.status, 'status', 429)),
+    );
+    expect(refreshes, 1);
+    api.dio.close();
+    await api.expired.close();
+    await api.tokensChanged.close();
+  });
 }

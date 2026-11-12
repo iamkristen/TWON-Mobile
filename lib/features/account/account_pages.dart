@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
@@ -9,6 +10,7 @@ import '../../shared/widgets.dart';
 import '../../shared/forms.dart';
 import '../auth/auth_cubit.dart';
 import '../feed/feed_pages.dart';
+import '../feed/post_engagement_cubit.dart' show isDefinitiveFailure;
 
 Future<void> showReport(BuildContext c, String kind, String target) async {
   await showModalBottomSheet(
@@ -116,6 +118,9 @@ class ProfilePage extends StatelessWidget {
             decoration: BoxDecoration(
               color: Theme.of(c).colorScheme.surface,
               borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: TwonPalette.moonBlue.withValues(alpha: .18),
+              ),
             ),
             child: Row(
               children: [
@@ -155,6 +160,7 @@ class ProfilePage extends StatelessWidget {
               spacing: 8,
               children: [
                 FilledButton.tonalIcon(
+                  style: TwonButtonStyles.secondary(),
                   onPressed: () => c.push('/profile/edit', extra: user.data),
                   icon: const Icon(Icons.edit_outlined),
                   label: const Text('Edit profile'),
@@ -171,13 +177,10 @@ class ProfilePage extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
-                ActionButton(
-                  label: follows ? 'Unfollow' : 'Follow',
-                  action: () => repository(c).request(
-                    'users/${user.id}/follow',
-                    method: follows ? 'DELETE' : 'POST',
-                  ),
-                  onSuccess: (_) => refresh(),
+                FollowButton(
+                  userId: user.id,
+                  following: follows,
+                  onChanged: refresh,
                 ),
                 ActionButton(
                   tonal: true,
@@ -270,13 +273,16 @@ class ProfileIdentity extends StatelessWidget {
               left: 0,
               right: 0,
               height: 165,
-              child: user.text('coverImage').isEmpty
-                  ? const WolfLandscape()
-                  : BrandImage(
-                      user.text('coverImage'),
-                      height: 165,
-                      width: double.infinity,
-                    ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: user.text('coverImage').isEmpty
+                    ? const WolfLandscape()
+                    : BrandImage(
+                        user.text('coverImage'),
+                        height: 165,
+                        width: double.infinity,
+                      ),
+              ),
             ),
             Positioned(
               bottom: 0,
@@ -286,6 +292,16 @@ class ProfileIdentity extends StatelessWidget {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: Theme.of(c).scaffoldBackgroundColor,
+                  border: Border.all(
+                    color: TwonPalette.moonBlue.withValues(alpha: .35),
+                  ),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x33071A33),
+                      blurRadius: 16,
+                      offset: Offset(0, 6),
+                    ),
+                  ],
                 ),
                 child: MemberAvatar(user.data, radius: 40),
               ),
@@ -415,17 +431,37 @@ class ProfileEditor extends StatelessWidget {
 }
 
 class SearchPage extends StatefulWidget {
-  const SearchPage({super.key});
+  const SearchPage({super.key, this.initialQuery = ''});
+  final String initialQuery;
   @override
   State<SearchPage> createState() => _SearchPageState();
 }
 
 class _SearchPageState extends State<SearchPage> {
-  String q = '';
+  late String q;
+  late final TextEditingController searchController;
   Timer? debounce;
+  @override
+  void initState() {
+    super.initState();
+    q = widget.initialQuery.trim();
+    searchController = TextEditingController(text: q);
+  }
+
+  @override
+  void didUpdateWidget(covariant SearchPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialQuery != widget.initialQuery) {
+      debounce?.cancel();
+      q = widget.initialQuery.trim();
+      searchController.text = q;
+    }
+  }
+
   @override
   void dispose() {
     debounce?.cancel();
+    searchController.dispose();
     super.dispose();
   }
 
@@ -435,9 +471,10 @@ class _SearchPageState extends State<SearchPage> {
       Padding(
         padding: const EdgeInsets.all(16),
         child: TextField(
-          autofocus: true,
+          controller: searchController,
+          autofocus: widget.initialQuery.isEmpty,
           decoration: const InputDecoration(
-            labelText: 'Find pack members',
+            labelText: 'Name, @handle or #hashtag',
             prefixIcon: Icon(Icons.search),
           ),
           onChanged: (v) {
@@ -450,13 +487,13 @@ class _SearchPageState extends State<SearchPage> {
       ),
       Expanded(
         child: q.isEmpty
-            ? const Center(child: Text('Search by name or handle.'))
+            ? const Center(child: Text('Search by name, handle or #hashtag.'))
             : CollectionView(
                 key: ValueKey(q),
-                path: 'users/search',
-                query: {'q': q},
-                empty: 'No members found.',
-                builder: (d, user, r) => Card(
+                path: q.startsWith('#') ? 'posts' : 'users/search',
+                query: q.startsWith('#') ? {'hashtag': q} : {'q': q},
+                empty: q.startsWith('#') ? 'No visible posts with this hashtag.' : 'No members found.',
+                builder: (d, user, r) => q.startsWith('#') ? PostCard(post: user, refresh: r) : Card(
                   child: ListTile(
                     leading: MemberAvatar(user.data),
                     title: Text(user.text('fullName')),
@@ -488,14 +525,40 @@ class NotificationsPage extends StatelessWidget {
         ),
       ],
     ),
-    builder: (d, n, r) => Card(
+    empty: 'All quiet. No signals yet.',
+    emptyAsset: 'no-clan-found',
+    builder: (d, n, r) => UnreadSurface(
+      unread: !n.flag('isRead'),
       child: ListTile(
-        leading: Badge(
-          isLabelVisible: !n.flag('isRead'),
-          child: MemberAvatar(n.object('actorId')),
+        contentPadding: const EdgeInsets.fromLTRB(14, 6, 12, 6),
+        leading: MemberAvatar(n.object('actorId')),
+        title: Text(
+          n.text('content'),
+          style: TextStyle(
+            fontWeight: n.flag('isRead') ? FontWeight.w400 : FontWeight.w700,
+          ),
         ),
-        title: Text(n.text('content')),
-        subtitle: Text(dateLabel(n.text('createdAt'))),
+        subtitle: Text(
+          dateLabel(n.text('createdAt')),
+          style: TextStyle(
+            color: n.flag('isRead')
+                ? Theme.of(d).colorScheme.onSurfaceVariant
+                : Theme.of(d).colorScheme.primary,
+            fontWeight: n.flag('isRead') ? FontWeight.w400 : FontWeight.w700,
+          ),
+        ),
+        trailing: n.flag('isRead')
+            ? null
+            : ExcludeSemantics(
+                child: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: Theme.of(d).colorScheme.primary,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
         onTap: () async {
           try {
             await repository(
@@ -705,12 +768,21 @@ class VerificationPage extends StatelessWidget {
                     'other',
                   ],
                 ),
+                // Private uploads (F-05 B3): submit the stable `ref`, preview `url`.
                 FieldSpec(
                   'documentImage',
                   'Identity document',
                   kind: FieldKind.image,
+                  uploadEndpoint: 'verification/uploads',
+                  uploadReferenceKey: 'ref',
                 ),
-                FieldSpec('selfieImage', 'Selfie', kind: FieldKind.image),
+                FieldSpec(
+                  'selfieImage',
+                  'Selfie',
+                  kind: FieldKind.image,
+                  uploadEndpoint: 'verification/uploads',
+                  uploadReferenceKey: 'ref',
+                ),
               ],
               submit: (v) => repository(
                 c,
@@ -736,6 +808,7 @@ class LookbookPage extends StatelessWidget {
         const Expanded(child: PageHeading('Pack lookbook', '')),
         IconButton.filled(
           tooltip: 'Submit lookbook photo',
+          style: TwonButtonStyles.filledIcon(),
           onPressed: () => c.push('/lookbook/new'),
           icon: const Icon(Icons.add),
         ),
@@ -769,7 +842,15 @@ class LookbookEditor extends StatelessWidget {
     title: 'Share your pack style',
     description: 'Photos appear in the lookbook after moderation.',
     fields: const [
-      FieldSpec('imageUrl', 'Photo', kind: FieldKind.image),
+      // F-33: uploaded to private storage; only its reference is submitted, and
+      // the photo becomes public only after a moderator approves it.
+      FieldSpec(
+        'imageRef',
+        'Photo',
+        kind: FieldKind.image,
+        uploadEndpoint: 'lookbook/uploads',
+        uploadReferenceKey: 'imageRef',
+      ),
       FieldSpec('title', 'Title'),
       FieldSpec('caption', 'Caption', kind: FieldKind.multiline),
     ],
@@ -778,5 +859,102 @@ class LookbookEditor extends StatelessWidget {
       notice(c, 'Photo submitted for review.');
       c.pop();
     },
+  );
+}
+
+
+/// Task 11: optimistic follow/unfollow. The label flips at once (with a
+/// progress indicator while the request runs); the server's "already
+/// following" / "not following" answers count as done. A refused request rolls
+/// back with a message; an uncertain one re-reads the profile.
+class FollowButton extends StatefulWidget {
+  const FollowButton({
+    super.key,
+    required this.userId,
+    required this.following,
+    required this.onChanged,
+  });
+  final String userId;
+  final bool following;
+  final VoidCallback onChanged;
+  @override
+  State<FollowButton> createState() => _FollowButtonState();
+}
+
+class _FollowButtonState extends State<FollowButton> {
+  late bool _following = widget.following;
+  bool _busy = false;
+
+  @override
+  void didUpdateWidget(FollowButton old) {
+    super.didUpdateWidget(old);
+    if (!_busy && old.following != widget.following) _following = widget.following;
+  }
+
+  Future<void> _toggle() async {
+    if (_busy) return;
+    final want = !_following;
+    final api = repository(context);
+    setState(() {
+      _following = want;
+      _busy = true;
+    });
+    try {
+      await api.request(
+        'users/${widget.userId}/follow',
+        method: want ? 'POST' : 'DELETE',
+      );
+      widget.onChanged();
+    } on AppFailure catch (error) {
+      final already = want
+          ? error.status == 409
+          : error.status == 400 &&
+                error.message.toLowerCase().contains('not following');
+      if (already) {
+        widget.onChanged();
+      } else if (isDefinitiveFailure(error)) {
+        if (mounted) {
+          setState(() => _following = !want);
+          notice(context, error.message);
+        }
+      } else {
+        widget.onChanged(); // the request may have been applied: re-read
+        if (mounted) notice(context, error.message);
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => FilledButton(
+    // Following reads as the quieter navy state; Follow stays the crimson CTA.
+    style: _following ? TwonButtonStyles.secondary() : null,
+    onPressed: _busy ? null : _toggle,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_busy)
+          const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        else
+          AnimatedSwitcher(
+            duration: TwonMotion.of(context, TwonMotion.slow),
+            switchInCurve: Curves.easeOutBack,
+            transitionBuilder: (child, a) =>
+                ScaleTransition(scale: a, child: child),
+            child: Icon(
+              _following ? Icons.check_rounded : Icons.person_add_alt_1_rounded,
+              key: ValueKey(_following),
+              size: 18,
+            ),
+          ),
+        const SizedBox(width: 8),
+        Text(_following ? 'Unfollow' : 'Follow'),
+      ],
+    ),
   );
 }

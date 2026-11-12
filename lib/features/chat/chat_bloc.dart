@@ -17,6 +17,17 @@ class ChatPatch extends ChatEvent {
   final Entity message;
 }
 
+/// A message pushed by the server (Task 15): inserted locally, no reload.
+class ChatIncoming extends ChatEvent {
+  ChatIncoming(this.message);
+  final Entity message;
+}
+
+class ChatRemove extends ChatEvent {
+  ChatRemove(this.messageId);
+  final String messageId;
+}
+
 class ChatSend extends ChatEvent {
   ChatSend(this.body);
   final Json body;
@@ -75,21 +86,76 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         ),
       );
     });
+    on<ChatIncoming>((event, emit) {
+      if (state.messages.any((m) => m.id == event.message.id)) {
+        return add(ChatPatch(event.message)); // already shown (e.g. own send)
+      }
+      final messages = [event.message, ...state.messages]
+        ..sort((a, b) => b.text('createdAt').compareTo(a.text('createdAt')));
+      emit(state.copy(messages: messages));
+    });
+    on<ChatRemove>((event, emit) {
+      emit(
+        state.copy(
+          messages: state.messages
+              .where((m) => m.id != event.messageId)
+              .toList(),
+        ),
+      );
+    });
     on<ChatLoad>(_load, transformer: restartable());
     on<ChatSend>(_send, transformer: sequential());
-    _socket = realtime.events.stream
-        .where((event) => event.payload['conversationId'] == id)
-        .listen((event) {
-          if (event.payload['message'] is Map) {
-            add(ChatPatch(Entity(asJson(event.payload['message']))));
-          }
-          add(ChatLoad());
-        });
+    // Task 15: pushed events update the open chat locally. Before, every event
+    // reloaded the last 30 messages and sent a read PATCH, and a 15 s poll did
+    // the same while the socket was connected.
+    _socket = realtime.events.stream.listen((event) {
+      if (event.name == 'connect') {
+        // Catch up on events missed while disconnected.
+        if (_loaded) add(ChatLoad());
+        return;
+      }
+      if (event.payload['conversationId'] != id) return;
+      final message = event.payload['message'];
+      switch (event.name) {
+        case 'chat:message' when message is Map:
+          add(ChatIncoming(Entity(asJson(message))));
+          _scheduleRead();
+        case 'chat:message_updated' when message is Map:
+          add(ChatPatch(Entity(asJson(message))));
+        case 'chat:message_deleted' when event.payload['messageId'] is String:
+          add(ChatRemove(event.payload['messageId'] as String));
+        default:
+          _scheduleReload(); // reactions and unknown shapes: one reload per burst
+      }
+    });
+    // Fallback only: while the socket is down, poll every 15 s.
     _poll = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (active) add(ChatLoad());
+      if (active && !realtime.connected) add(ChatLoad());
     });
     add(ChatLoad());
   }
+
+  Timer? _readTimer;
+  Timer? _reloadTimer;
+
+  /// One read receipt per burst of incoming messages (loads mark read server-side).
+  void _scheduleRead() {
+    _readTimer?.cancel();
+    _readTimer = Timer(const Duration(seconds: 1), () {
+      if (!active || isClosed) return;
+      repository
+          .request('conversations/$id/read', method: 'PATCH')
+          .catchError((_) => null);
+    });
+  }
+
+  void _scheduleReload() {
+    _reloadTimer?.cancel();
+    _reloadTimer = Timer(const Duration(seconds: 1), () {
+      if (active && !isClosed) add(ChatLoad());
+    });
+  }
+
   bool active = true;
   bool _loaded = false;
   bool _historyExhausted = false;
@@ -130,7 +196,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
           sent: state.sent,
         ),
       );
-      await repository.request('conversations/$id/read', method: 'PATCH');
+      // Loading messages marks them read on the server; no separate PATCH.
     } catch (error) {
       if (!emit.isDone) {
         emit(state.copy(loading: false, error: error.toString()));
@@ -168,6 +234,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   @override
   Future<void> close() async {
     _poll.cancel();
+    _readTimer?.cancel();
+    _reloadTimer?.cancel();
     await _socket.cancel();
     return super.close();
   }

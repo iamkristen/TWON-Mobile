@@ -10,6 +10,9 @@ import 'package:intl/intl.dart';
 import '../core/api.dart';
 import '../core/models.dart';
 import '../core/collection_cubit.dart';
+import '../core/responsive_media.dart';
+import '../core/theme.dart';
+import 'brand_motion.dart';
 
 AppRepository repository(BuildContext context) => context.read<AppRepository>();
 String dateLabel(String value) {
@@ -74,21 +77,83 @@ class BrandImage extends StatelessWidget {
             color: Theme.of(context).colorScheme.surfaceContainer,
             child: const Icon(Icons.landscape_outlined, size: 40),
           )
-        : CachedNetworkImage(
-            imageUrl: url,
+        : isNonImageMedia(url)
+        ? _MediaLinkTile(url: url, height: height, width: width)
+        : _network(context, _sizedUrl(context)),
+  );
+
+  /// Task 04: a stored variant sized for the displayed width (responsive
+  /// uploads only; other URLs are used as they are).
+  String _sizedUrl(BuildContext context) {
+    final media = MediaQuery.maybeOf(context);
+    final logicalWidth = width ?? media?.size.width ?? 0;
+    return responsiveImageUrl(url, logicalWidth * (media?.devicePixelRatio ?? 1));
+  }
+
+  Widget _network(BuildContext context, String imageUrl) => CachedNetworkImage(
+    imageUrl: imageUrl,
+    height: height,
+    width: width,
+    fit: fit,
+    // Task 14: decode near the displayed size, not the stored 2048 px.
+    memCacheWidth: decodeWidth(
+      width ?? MediaQuery.maybeOf(context)?.size.width ?? 0,
+      MediaQuery.maybeOf(context)?.devicePixelRatio ?? 1,
+      cover: fit == BoxFit.cover,
+    ),
+    placeholder: (_, _) => SizedBox(
+      height: height,
+      child: const Center(child: CircularProgressIndicator()),
+    ),
+    // A variant that cannot be loaded falls back to the main image.
+    errorWidget: (_, _, _) => imageUrl != url
+        ? _network(context, url)
+        : SizedBox(
             height: height,
-            width: width,
-            fit: fit,
-            placeholder: (_, _) => SizedBox(
-              height: height,
-              child: const Center(child: CircularProgressIndicator()),
-            ),
-            errorWidget: (_, _, _) => SizedBox(
-              height: height,
-              child: const Center(child: Icon(Icons.broken_image_outlined)),
-            ),
+            child: const Center(child: Icon(Icons.broken_image_outlined)),
           ),
   );
+}
+
+/// Task 14: video, audio and documents are not loaded inline; a labelled tile
+/// opens them on demand (nothing is downloaded while scrolling).
+class _MediaLinkTile extends StatelessWidget {
+  const _MediaLinkTile({required this.url, required this.height, this.width});
+  final String url;
+  final double height;
+  final double? width;
+  @override
+  Widget build(BuildContext context) {
+    final video = RegExp(r'\.(mp4|mov|webm)$', caseSensitive: false)
+        .hasMatch(Uri.tryParse(url)?.path ?? url);
+    final label = video ? 'Play video' : 'Open file';
+    return Semantics(
+      button: true,
+      label: label,
+      child: Material(
+        color: Theme.of(context).colorScheme.surfaceContainer,
+        child: InkWell(
+          onTap: () => openUrl(url).catchError((Object error) {
+            if (context.mounted) notice(context, error.toString());
+          }),
+          child: SizedBox(
+            height: height.isFinite ? height : null,
+            width: width,
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(video ? Icons.play_circle_outline : Icons.insert_drive_file_outlined, size: 40),
+                  const SizedBox(height: 4),
+                  ExcludeSemantics(child: Text(label)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class MemberAvatar extends StatelessWidget {
@@ -124,11 +189,37 @@ class ErrorPanel extends StatelessWidget {
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.cloud_off_outlined, size: 40),
-        const SizedBox(height: 12),
-        Text(message, textAlign: TextAlign.center),
-        if (retry != null)
-          TextButton(onPressed: retry, child: const Text('Try again')),
+        Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: Theme.of(context).colorScheme.primary.withValues(alpha: .1),
+            border: Border.all(
+              color: TwonPalette.moonBlue.withValues(alpha: .25),
+            ),
+          ),
+          child: Icon(
+            Icons.cloud_off_outlined,
+            size: 30,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          message,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
+        if (retry != null) ...[
+          const SizedBox(height: 14),
+          FilledButton.icon(
+            style: TwonButtonStyles.secondary(),
+            onPressed: retry,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Try again'),
+          ),
+        ],
       ],
     ),
   );
@@ -169,7 +260,7 @@ class CollectionView extends StatelessWidget {
               if (state.loading)
                 const Padding(
                   padding: EdgeInsets.all(32),
-                  child: Center(child: CircularProgressIndicator()),
+                  child: Center(child: MoonPulseLoader()),
                 ),
               if (state.error != null)
                 ErrorPanel(state.error!, retry: () => cubit.load()),
@@ -177,7 +268,13 @@ class CollectionView extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.all(32),
                   child: emptyAsset == null
-                      ? Text(empty, textAlign: TextAlign.center)
+                      ? Text(
+                          empty,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Theme.of(c).colorScheme.onSurfaceVariant,
+                          ),
+                        )
                       : BrandEmptyState(
                           asset: emptyAsset!,
                           title: empty,
@@ -211,13 +308,13 @@ class DetailView extends StatelessWidget {
   final Widget Function(BuildContext, Entity, VoidCallback) builder;
   @override
   Widget build(BuildContext context) => BlocProvider(
-    create: (c) => DetailCubit(repository(c), path)..load(),
+    create: (c) => DetailCubit(repository(c), path)..load(cached: true),
     child: BlocBuilder<DetailCubit, DetailState>(
       builder: (c, state) {
         Future<void> refresh() => c.read<DetailCubit>().load();
         if (state.item == null) {
           return state.loading
-              ? const Center(child: CircularProgressIndicator())
+              ? const Center(child: MoonPulseLoader())
               : ErrorPanel(state.error ?? 'Not found.', retry: refresh);
         }
         return RefreshIndicator(
@@ -288,6 +385,7 @@ class ActionButton extends StatelessWidget {
         );
         return tonal
             ? FilledButton.tonal(
+                style: TwonButtonStyles.secondary(),
                 onPressed: enabled && !s.busy ? run : null,
                 child: content,
               )
@@ -353,7 +451,7 @@ class ResourcePanel extends StatelessWidget {
   final Widget Function(BuildContext, Entity, VoidCallback) builder;
   @override
   Widget build(BuildContext context) => BlocProvider(
-    create: (c) => DetailCubit(repository(c), path)..load(),
+    create: (c) => DetailCubit(repository(c), path)..load(cached: true),
     child: BlocBuilder<DetailCubit, DetailState>(
       builder: (c, s) {
         if (s.item == null) {
@@ -406,6 +504,8 @@ class BrandWordmark extends StatelessWidget {
   );
 }
 
+/// Branded empty state: approved TWON wolf art (decorative, hidden from
+/// screen readers) over a single soft moonlight halo, then the message.
 class BrandEmptyState extends StatelessWidget {
   const BrandEmptyState({
     super.key,
@@ -417,37 +517,165 @@ class BrandEmptyState extends StatelessWidget {
   final String asset, title, message;
   final Widget? action;
   @override
-  Widget build(BuildContext c) => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SvgPicture.asset(
-            'assets/illustrations/$asset.svg',
-            height: 160,
-            semanticsLabel: title,
+  Widget build(BuildContext c) {
+    final scheme = Theme.of(c).colorScheme;
+    final dark = Theme.of(c).brightness == Brightness.dark;
+    return Center(
+      child: StealthEntrance(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ExcludeSemantics(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        (dark ? TwonPalette.moonlight : TwonPalette.moonBlue)
+                            .withValues(alpha: dark ? .12 : .2),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: SvgPicture.asset(
+                      'assets/illustrations/$asset.svg',
+                      height: 150,
+                      excludeFromSemantics: true,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Semantics(
+                header: true,
+                child: Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(c).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (message.isNotEmpty) const SizedBox(height: 8),
+              if (message.isNotEmpty)
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: scheme.onSurfaceVariant),
+                ),
+              if (action != null) ...[const SizedBox(height: 16), action!],
+            ],
           ),
-          const SizedBox(height: 20),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: Theme.of(
-              c,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+}
+
+/// List row surface for unread-aware items (chats, signals): a soft tint and
+/// a crimson edge when unread, a plain surface once read. Announces "Unread".
+class UnreadSurface extends StatelessWidget {
+  const UnreadSurface({super.key, required this.unread, required this.child});
+  final bool unread;
+  final Widget child;
+  @override
+  Widget build(BuildContext c) {
+    final scheme = Theme.of(c).colorScheme;
+    final dark = Theme.of(c).brightness == Brightness.dark;
+    final tint = unread
+        ? (dark
+              ? TwonPalette.moonBlue.withValues(alpha: .1)
+              : scheme.primary.withValues(alpha: .05))
+        : Colors.transparent;
+    return Semantics(
+      value: unread ? 'Unread' : null,
+      child: AnimatedContainer(
+        duration: TwonMotion.of(c, TwonMotion.base),
+        curve: TwonMotion.curve,
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: tint,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: unread
+                ? scheme.primary.withValues(alpha: .22)
+                : scheme.outlineVariant.withValues(alpha: .35),
           ),
-          if (message.isNotEmpty) const SizedBox(height: 8),
-          if (message.isNotEmpty)
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Theme.of(c).colorScheme.onSurfaceVariant),
-            ),
-          if (action != null) ...[const SizedBox(height: 12), action!],
-        ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        // Its own Material, so ListTile ink and hover paint above the tint.
+        child: Stack(
+          children: [
+            Material(type: MaterialType.transparency, child: child),
+            if (unread)
+              Positioned(
+                left: 0,
+                top: 12,
+                bottom: 12,
+                child: Container(
+                  width: 3,
+                  decoration: BoxDecoration(
+                    color: scheme.primary,
+                    borderRadius: const BorderRadius.horizontal(
+                      right: Radius.circular(3),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact crimson count (unread chats, signals). Decorative: the row says it.
+class CountPill extends StatelessWidget {
+  const CountPill(this.count, {super.key});
+  final int count;
+  @override
+  Widget build(BuildContext c) => ExcludeSemantics(
+    child: Container(
+      constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(
+        color: Theme.of(c).brightness == Brightness.dark
+            ? TwonPalette.crimson
+            : Theme.of(c).colorScheme.primary,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      // Sized to its label (never stretched by the parent), centred within the 20 px minimum.
+      child: Center(
+        widthFactor: 1,
+        heightFactor: 1,
+        child: Text(
+          count > 99 ? '99+' : '$count',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
       ),
     ),
   );
+}
+
+/// Short relative time for lists: "now", "5m", "3h", "2d", then a date.
+String shortTimeLabel(String value, {DateTime? now}) {
+  final d = DateTime.tryParse(value)?.toLocal();
+  if (d == null) return '';
+  final diff = (now ?? DateTime.now()).difference(d);
+  if (diff.inMinutes < 1) return 'now';
+  if (diff.inHours < 1) return '${diff.inMinutes}m';
+  if (diff.inDays < 1) return '${diff.inHours}h';
+  if (diff.inDays < 7) return '${diff.inDays}d';
+  return DateFormat.MMMd().format(d);
 }
 
 class SwipeReply extends StatefulWidget {
@@ -532,7 +760,7 @@ class WolfLandscape extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xff334564), Color(0xff19263f), Color(0xff352c4e)],
+          colors: [TwonPalette.navyRaised, TwonPalette.navy, Color(0xff3a1222)],
         ),
       ),
       child: Stack(

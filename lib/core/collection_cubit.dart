@@ -11,21 +11,38 @@ class CollectionState {
     this.error,
     this.cursor,
     this.loaded = false,
+    this.pages = 0,
   });
   final List<Entity> items;
   final bool loading, loadingMore, loaded;
   final String? error, cursor;
+
+  /// Pages loaded since the last full (re)load (Task 12: bounded auto-loading).
+  final int pages;
 }
 
 class CollectionCubit extends Cubit<CollectionState> {
   CollectionCubit(this.repository, this.path, {this.query = const {}})
     : super(const CollectionState());
+
+  /// Pages loaded automatically while scrolling; beyond this, more needs a tap,
+  /// so an endless scroll never loads unlimited pages and images (Task 12).
+  static const autoLoadPages = 8;
+
+  bool get canAutoLoad =>
+      state.cursor != null &&
+      state.error == null &&
+      !state.loading &&
+      !state.loadingMore &&
+      state.pages < autoLoadPages;
   final AppRepository repository;
   final String path;
   Json query;
   CancelToken? _cancel;
   int _request = 0;
-  Future<void> load({Json? filters, bool more = false}) async {
+  /// [cached]: an initial load may reuse a fresh public response (Task 13);
+  /// refreshes and later pages always go to the server.
+  Future<void> load({Json? filters, bool more = false, bool cached = false}) async {
     if (more && (state.loadingMore || state.loading || state.cursor == null)) {
       return;
     }
@@ -41,14 +58,15 @@ class CollectionCubit extends Cubit<CollectionState> {
         loadingMore: more,
         cursor: old.cursor,
         loaded: old.loaded,
+        pages: old.pages,
       ),
     );
     try {
-      final page = await repository.page(
-        path,
-        query: {...query, 'limit': 20, if (more) 'cursor': old.cursor},
-        cancel: _cancel,
-      );
+      final pageQuery = {...query, 'limit': 20, if (more) 'cursor': old.cursor};
+      final repo = repository;
+      final page = cached && !more && repo is DioRepository
+          ? await repo.page(path, query: pageQuery, cancel: _cancel, cached: true)
+          : await repository.page(path, query: pageQuery, cancel: _cancel);
       if (isClosed || request != _request) return;
       final rows = more ? [...old.items, ...page.items] : page.items;
       final unique = <String, Entity>{for (final row in rows) row.id: row};
@@ -57,6 +75,7 @@ class CollectionCubit extends Cubit<CollectionState> {
           items: unique.values.toList(),
           cursor: page.cursor,
           loaded: true,
+          pages: more ? old.pages + 1 : 1,
         ),
       );
     } catch (error) {
@@ -67,6 +86,7 @@ class CollectionCubit extends Cubit<CollectionState> {
           cursor: more ? old.cursor : null,
           error: error.toString(),
           loaded: old.loaded,
+          pages: old.pages,
         ),
       );
     }
@@ -83,6 +103,7 @@ class CollectionCubit extends Cubit<CollectionState> {
         error: state.error,
         loading: state.loading,
         loadingMore: state.loadingMore,
+        pages: state.pages,
       ),
     );
   }
@@ -134,12 +155,18 @@ class DetailCubit extends Cubit<DetailState> {
   final AppRepository repository;
   final String path;
   CancelToken? _cancel;
-  Future<void> load() async {
+  /// [cached]: the initial load may reuse a fresh public response (Task 13).
+  Future<void> load({bool cached = false}) async {
     _cancel?.cancel();
     final token = _cancel = CancelToken();
     emit(DetailState(item: state.item, loading: true));
     try {
-      final result = asJson(await repository.request(path, cancel: token));
+      final repo = repository;
+      final result = asJson(
+        cached && repo is DioRepository
+            ? await repo.request(path, cancel: token, cached: true)
+            : await repository.request(path, cancel: token),
+      );
       if (!isClosed && !token.isCancelled) {
         emit(DetailState(item: Entity(result)));
       }

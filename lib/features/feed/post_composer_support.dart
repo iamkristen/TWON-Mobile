@@ -9,7 +9,7 @@ import '../../core/models.dart';
 import '../../shared/widgets.dart';
 
 final socialTokens = RegExp(
-  r'(?<![A-Za-z0-9_])(?:@[A-Za-z0-9_]+|#[\p{L}\p{M}\p{N}_]+)',
+  r'https?://[^\s]+|www\.[^\s]+|(?<![\p{L}\p{M}\p{N}_#])(?:@[A-Za-z0-9_]+|#[\p{L}\p{N}_][\p{L}\p{M}\p{N}_]*)',
   unicode: true,
 );
 
@@ -38,10 +38,9 @@ class SocialTextController extends TextEditingController {
       spans.add(
         TextSpan(
           text: token.group(0),
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.primary,
-            fontWeight: FontWeight.w600,
-          ),
+          style: token.group(0)!.startsWith('@') || token.group(0)!.startsWith('#')
+              ? TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w600)
+              : null,
         ),
       );
       offset = token.end;
@@ -243,7 +242,20 @@ class ComposerPhotoStrip extends StatelessWidget {
             Semantics(
               label: 'Photo ${index + 1} of ${urls.length}',
               image: true,
-              child: BrandImage(urls[index], width: 160, height: 120),
+              child: Container(
+                foregroundDecoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: Theme.of(
+                      c,
+                    ).colorScheme.outlineVariant.withValues(alpha: .6),
+                  ),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: BrandImage(urls[index], width: 160, height: 120),
+                ),
+              ),
             ),
             if (onRemove != null)
               Positioned(
@@ -311,7 +323,11 @@ class _SocialPostTextState extends State<SocialPostText> {
           ? members[text.substring(1).toLowerCase()]
           : null;
       TapGestureRecognizer? link;
-      if (member != null) {
+      if (text.startsWith('#') && text.substring(1).runes.length <= 64) {
+        link = TapGestureRecognizer()
+          ..onTap = () => c.push('/search?q=${Uri.encodeComponent(text)}');
+        links.add(link);
+      } else if (member != null) {
         link = TapGestureRecognizer()
           ..onTap = () =>
               c.push('/members/${Uri.encodeComponent('${member['handle']}')}');

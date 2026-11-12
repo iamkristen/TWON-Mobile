@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:twon_mobile/features/feed/feed_pages.dart' show CommentsPane;
 import 'social_experience_test.dart' show Harness;
 
 void main() {
@@ -28,10 +29,11 @@ void main() {
         },
       );
       await h.mount(tester, width: 320);
-      await tester.ensureVisible(find.byTooltip('Comment').first);
-      await tester.tap(find.byTooltip('Comment').first);
+      await tester.ensureVisible(find.byIcon(Icons.chat_bubble_outline_rounded).first);
+      await tester.tap(find.byIcon(Icons.chat_bubble_outline_rounded).first);
       await tester.pumpAndSettle();
-      expect(find.text('Comments'), findsOneWidget);
+      // Redesigned sheet: a drag handle and the comment list, no "Comments" heading.
+      expect(find.byType(CommentsPane), findsOneWidget);
       expect(find.text('See you there!'), findsOneWidget);
       await tester.tap(find.byTooltip('Like comment').first);
       await tester.pumpAndSettle();

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 
 /// Animates only the placeholder shapes, leaving the card surface unchanged.
 class FeedShimmer extends StatefulWidget {
@@ -29,7 +30,7 @@ class _FeedShimmerState extends State<FeedShimmer> with SingleTickerProviderStat
     if (MediaQuery.disableAnimationsOf(context)) return widget.child;
     final scheme = Theme.of(context).colorScheme;
     final base = scheme.surfaceContainerHighest;
-    final highlight = Color.lerp(base, scheme.onSurface, .12)!;
+    final highlight = Color.lerp(base, TwonPalette.moonlight, .14)!;
     return RepaintBoundary(
       child: AnimatedBuilder(
         animation: controller,

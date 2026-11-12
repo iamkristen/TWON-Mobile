@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/theme.dart';
 import '../../core/models.dart';
 import '../../shared/widgets.dart';
 import '../../shared/forms.dart';
@@ -45,6 +46,7 @@ class _ClansPageState extends State<ClansPage> {
             const SizedBox(width: 10),
             IconButton.filled(
               tooltip: 'Create clan',
+              style: TwonButtonStyles.filledIcon(),
               onPressed: () => c.push('/clans/new'),
               icon: const Icon(Icons.add),
             ),
@@ -94,13 +96,16 @@ class ClanPage extends StatelessWidget {
     builder: (d, clan, refresh) => Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        BrandImage(clan.text('logo'), height: 160),
+        clan.text('logo').isEmpty
+            ? const SizedBox(height: 160, child: WolfLandscape())
+            : BrandImage(clan.text('logo'), height: 160),
         const SizedBox(height: 16),
         PageHeading(
           clan.text('name'),
           '${clan.number('memberCount')} members · ${clan.text('country')}',
         ),
         Text(clan.text('description')),
+        const SizedBox(height: 16),
         if (clan.text('clanRules').isNotEmpty)
           Card(
             child: Padding(
