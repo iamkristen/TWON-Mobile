@@ -42,5 +42,65 @@ class AppFailure implements Exception {
   String toString() => message;
 }
 
+/// G2/G3/G4/G7 handoffs: clear copy for the backend's new error codes. Unknown
+/// codes keep the server's message. `retryAfter` (429) gives the date to try again.
+String errorCopy(
+  String code,
+  String fallback, {
+  Duration? retryAfter,
+  DateTime? now,
+}) {
+  switch (code) {
+    case 'CLAN_DEMOTION_REASON_REQUIRED':
+      return 'Give a reason when lowering a title. The member will see it.';
+    case 'CLAN_TITLE_STALE':
+      return 'This member\'s title changed meanwhile. Reload and try again.';
+    case 'CLAN_TITLE_UNCHANGED':
+      return 'The member already has this title.';
+    case 'CLAN_DENIAL_REASON_REQUIRED':
+      return 'Give a reason (5–500 characters). The member will see it.';
+    case 'CLAN_PRIVILEGED_LEADER_ONLY':
+      return 'Only the clan leader can decide this title.';
+    case 'CLAN_SELF_PROMOTION':
+      return 'Nobody decides their own request.';
+    case 'CLAN_COOLING_OFF':
+      return 'This title can be approved 48 hours after the request.';
+    case 'CLAN_REQUEST_COOLDOWN':
+      final at = retryAfter == null
+          ? null
+          : (now ?? DateTime.now()).add(retryAfter);
+      return at == null
+          ? 'You can ask again 7 days after a denial.'
+          : 'You can ask again on ${at.toLocal().toIso8601String().split('T').first}.';
+    case 'POINTS_UNAVAILABLE':
+      return 'Pack Points are temporarily unavailable. Please try again later.';
+    case 'EVENT_TIME_ZONE_INVALID':
+      return 'Choose a valid time zone.';
+    case 'EVENT_TIME_ZONE_REQUIRED':
+      return 'Choose the time zone.';
+    case 'EVENT_TIME_NONEXISTENT':
+      return 'That time doesn\'t exist on that date in this time zone (a daylight-saving change). Choose another.';
+    case 'EVENT_TIME_RANGE':
+      return 'End time must be after the start.';
+    case 'EVENT_START_IN_PAST':
+      return 'Choose a future date and time.';
+    case 'EVENT_RSVP_CLOSED':
+      return 'RSVPs closed when the gathering started.';
+    case 'EVENT_FULL':
+      return 'This gathering is full.';
+    case 'EVENT_CANCELLED':
+      return 'This gathering was cancelled.';
+    case 'EVENT_STARTED':
+      return 'The time can\'t change after the gathering started.';
+    case 'EVENT_CHANGED':
+      return 'Someone else changed this gathering. Reload.';
+    case 'EVENT_CAPACITY_BELOW_RSVPS':
+      return 'More people are already registered than that capacity.';
+    case 'EVENT_ENDED':
+      return 'Past gatherings are kept for the record.';
+  }
+  return fallback;
+}
+
 String currencyForCountry(String country) =>
     ['np', 'nepal'].contains(country.trim().toLowerCase()) ? 'npr' : 'gbp';

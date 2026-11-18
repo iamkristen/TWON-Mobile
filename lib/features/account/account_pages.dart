@@ -133,7 +133,8 @@ class ProfilePage extends StatelessWidget {
                     child: Column(
                       children: [
                         Text(
-                          '${user.object('stats')[stat.$1] ?? 0}',
+                          // G3 (handoff B): null unless the member opted in.
+                          statLabel(stat.$1, user.object('stats')[stat.$1]),
                           style: const TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.w700,
@@ -957,4 +958,13 @@ class _FollowButtonState extends State<FollowButton> {
       ],
     ),
   );
+}
+
+/// G3 (handoff B): `packPoints` is `null` on another member's profile when they
+/// keep their ranking private (the default): show "Private", never 0.
+String statLabel(String key, Object? value) {
+  if (key == 'packPoints' && value == null) {
+    return 'Private';
+  }
+  return '${value ?? 0}';
 }

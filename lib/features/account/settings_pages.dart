@@ -95,6 +95,7 @@ class PreferencesPage extends StatelessWidget {
     builder: (d, user, r) {
       final prefs = user.object('preferences');
       final n = asJson(prefs['notifications']), p = asJson(prefs['privacy']);
+      final ranking = asJson(prefs['ranking']);
       return FeatureForm(
         title: 'Notifications & privacy',
 
@@ -123,6 +124,16 @@ class PreferencesPage extends StatelessWidget {
             kind: FieldKind.toggle,
             initial: p['showLocation'] ?? true,
           ),
+          // G3 (handoff B): off by default; off hides you from leaderboards
+          // and your total from others at once.
+          FieldSpec(
+            'rankingPublic',
+            'Show me on public leaderboards and show my Pack Points on my profile',
+            kind: FieldKind.toggle,
+            initial: ranking['public'] == true,
+            hint:
+                'When off, you are hidden from leaderboards and others see your points as private.',
+          ),
         ],
         submit: (v) => repository(c).request(
           'users/me',
@@ -135,6 +146,7 @@ class PreferencesPage extends StatelessWidget {
                 'messages': v['messages'],
               },
               'privacy': {'showLocation': v['showLocation']},
+              'ranking': {'public': v['rankingPublic'] == true},
             },
           },
         ),

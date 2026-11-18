@@ -124,7 +124,7 @@ class _GatheringsPageState extends State<GatheringsPage> {
                     ],
                     // Date first, in the brand accent: it is what people scan for.
                     Text(
-                      '${dateLabel(event.text('date'))} · ${event.text('time')} UTC',
+                      eventWhen(event.data),
                       style: Theme.of(c).textTheme.labelLarge?.copyWith(
                         color: Theme.of(c).colorScheme.primary,
                         fontWeight: FontWeight.w800,
@@ -133,9 +133,14 @@ class _GatheringsPageState extends State<GatheringsPage> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      event.text('title'),
+                      event.text('phase') == 'cancelled'
+                          ? 'Cancelled · ${event.text('title')}'
+                          : event.text('title'),
                       style: Theme.of(c).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.bold,
+                        decoration: event.text('phase') == 'cancelled'
+                            ? TextDecoration.lineThrough
+                            : null,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -248,22 +253,25 @@ class GatheringPage extends StatelessWidget {
       final attending = (event.data['attendees'] as List? ?? []).any(
         (v) => entityId(v) == userId,
       );
-      final ended =
-          (DateTime.tryParse(
-                    '${event.text('date').split('T').first}T${event.text('endTime', event.text('time'))}:00Z',
-                  ) ??
-                  DateTime.now())
-              .isBefore(DateTime.now());
+      // G4 (handoff C): the server's phase and rsvpOpen decide.
+      final rsvp = rsvpState(event.data, attending: attending);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (event.text('image').isNotEmpty)
             BrandImage(event.text('image'), width: double.infinity),
           const SizedBox(height: 20),
-          PageHeading(
-            event.text('title'),
-            '${dateLabel(event.text('date'))} · ${event.text('time')}${event.text('endTime').isNotEmpty ? '–${event.text('endTime')}' : ''} UTC',
-          ),
+          PageHeading(event.text('title'), eventWhen(event.data)),
+          if (event.text('phase') == 'cancelled')
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.event_busy),
+                title: const Text('This gathering was cancelled'),
+                subtitle: event.text('cancelReason').isEmpty
+                    ? null
+                    : Text(event.text('cancelReason')),
+              ),
+            ),
           Text(event.text('description')),
           ListTile(
             leading: const Icon(Icons.place_outlined),
@@ -274,15 +282,24 @@ class GatheringPage extends StatelessWidget {
           ),
           Text('${event.number('attendeeCount')} members attending'),
           const SizedBox(height: 16),
-          ActionButton(
-            label: attending ? 'Cancel RSVP' : 'Join gathering',
-            enabled: attending || !ended,
-            action: () => repository(c).request(
-              'events/$id/attend',
-              method: attending ? 'DELETE' : 'POST',
+          if (rsvp.action == null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                rsvp.label,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            )
+          else
+            ActionButton(
+              label: rsvp.label,
+              action: () => repository(c).request(
+                'events/$id/attend',
+                method: rsvp.action == 'leave' ? 'DELETE' : 'POST',
+              ),
+              onSuccess: (_) => refresh(),
             ),
-            onSuccess: (_) => refresh(),
-          ),
           TextButton.icon(
             onPressed: () => SharePlus.instance.share(
               ShareParams(text: '${AppConfig.websiteUrl}/events/$id'),
@@ -326,14 +343,53 @@ class GatheringPage extends StatelessWidget {
                               );
                             },
                           ),
+                        if (event.text('phase') == 'upcoming')
+                          TextButton(
+                            onPressed: () => showModalBottomSheet(
+                              context: c,
+                              isScrollControlled: true,
+                              builder: (sheet) => SizedBox(
+                                height: 360,
+                                child: FeatureForm(
+                                  title: 'Cancel this gathering',
+                                  button: 'Cancel gathering',
+                                  fields: const [
+                                    FieldSpec(
+                                      'reason',
+                                      'Reason (shown to everyone registered)',
+                                      kind: FieldKind.multiline,
+                                      maxLength: 500,
+                                    ),
+                                  ],
+                                  submit: (v) => repository(c).request(
+                                    'events/$id/cancel',
+                                    method: 'POST',
+                                    body: {
+                                      'reason': '${v['reason'] ?? ''}'.trim(),
+                                    },
+                                  ),
+                                  onSuccess: (_) {
+                                    Navigator.pop(sheet);
+                                    refresh();
+                                  },
+                                ),
+                              ),
+                            ),
+                            child: const Text('Cancel gathering'),
+                          ),
                         ActionButton(
                           label: 'Delete gathering',
                           tonal: true,
-                          confirmation: 'Remove this gathering for everyone?',
+                          confirmation:
+                              'Remove this gathering for everyone? If people registered, it is cancelled instead and kept.',
                           action: () => repository(
                             c,
                           ).request('events/$id', method: 'DELETE'),
-                          onSuccess: (_) => c.pop(),
+                          // G4: with registrations it is cancelled, not deleted.
+                          onSuccess: (result) =>
+                              asJson(result)['cancelled'] == true
+                              ? refresh()
+                              : c.pop(),
                         ),
                       ],
                     );
@@ -364,25 +420,37 @@ class GatheringEditor extends StatelessWidget {
         maxLength: 10000,
       ),
       FieldSpec('category', 'Category', initial: initial?['category']),
-      FieldSpec(
-        'date',
-        'Date',
-        kind: FieldKind.date,
-        initial: initial?['date']?.toString().split('T').first,
-      ),
-      FieldSpec(
-        'time',
-        'Start time (UTC)',
-        kind: FieldKind.time,
-        initial: initial?['time'],
-      ),
-      FieldSpec(
-        'endTime',
-        'End time (UTC)',
-        kind: FieldKind.time,
-        required: false,
-        initial: initial?['endTime'],
-      ),
+      // G4 (handoff C): in the gathering's own zone; fixed once started.
+      if (scheduleEditable(initial)) ...[
+        FieldSpec(
+          'date',
+          'Date',
+          kind: FieldKind.date,
+          initial: initial?['date']?.toString().split('T').first,
+        ),
+        FieldSpec(
+          'time',
+          'Start time (in the gathering\'s time zone)',
+          kind: FieldKind.time,
+          initial: initial?['time'],
+        ),
+        FieldSpec(
+          'endTime',
+          'End time (in the gathering\'s time zone)',
+          kind: FieldKind.time,
+          required: false,
+          initial: initial?['endTime'],
+        ),
+        FieldSpec(
+          'timeZone',
+          'Time zone',
+          kind: FieldKind.select,
+          options: timeZoneOptions(initial),
+          initial: (initial?['timeZoneSource'] == 'organizer')
+              ? initial!['timeZone']
+              : null,
+        ),
+      ],
       FieldSpec('location', 'Location', initial: initial?['location']),
       FieldSpec(
         'image',
@@ -393,7 +461,8 @@ class GatheringEditor extends StatelessWidget {
       ),
     ],
     submit: (v) {
-      if ('${v['endTime']}'.isNotEmpty &&
+      if (v['endTime'] != null &&
+          '${v['endTime']}'.isNotEmpty &&
           '${v['endTime']}'.compareTo('${v['time']}') <= 0) {
         throw const AppFailure(
           'End time must be after the start time on the same day.',
@@ -430,4 +499,82 @@ class _EventFact extends StatelessWidget {
       ),
     );
   }
+}
+
+/// G4 (handoff C): IANA time zones offered to organisers (the id is sent as chosen).
+const gatheringTimeZones = [
+  'Asia/Kathmandu',
+  'Europe/London',
+  'Europe/Dublin',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Asia/Kolkata',
+  'Asia/Dubai',
+  'Asia/Hong_Kong',
+  'Asia/Singapore',
+  'Asia/Tokyo',
+  'Australia/Sydney',
+  'America/New_York',
+  'America/Chicago',
+  'America/Los_Angeles',
+  'UTC',
+];
+List<String> timeZoneOptions(Json? initial) {
+  final current = initial?['timeZone']?.toString();
+  return [
+    if (current != null &&
+        current.isNotEmpty &&
+        !gatheringTimeZones.contains(current))
+      current,
+    ...gatheringTimeZones,
+  ];
+}
+
+/// Date, wall-clock time and zone exactly as the organiser set them (no UTC guess).
+String eventWhen(Json e) {
+  final date = dateLabel('${e['date'] ?? ''}');
+  final time = '${e['time'] ?? ''}';
+  final end = '${e['endTime'] ?? ''}';
+  final zone = '${e['timeZone'] ?? ''}';
+  final when =
+      '$date · $time${end.isNotEmpty ? '–$end' : ''}${zone.isNotEmpty ? ' ($zone)' : ''}';
+  return e['timeZoneAssumed'] == true
+      ? '$when · time zone not confirmed'
+      : when;
+}
+
+/// The schedule (date, time, zone) can change only before the gathering starts.
+bool scheduleEditable(Json? e) =>
+    e == null || e['phase'] == null || e['phase'] == 'upcoming';
+
+/// G4 (handoff C): what the RSVP control shows, from the server's phase, rsvpOpen and spotsLeft.
+({String label, String? action}) rsvpState(Json e, {required bool attending}) {
+  final phase = '${e['phase'] ?? 'upcoming'}';
+  final open = e['rsvpOpen'] != false;
+  final full = e['spotsLeft'] == 0;
+  if (attending && (open || phase == 'cancelled')) {
+    return (label: 'Cancel RSVP', action: 'leave');
+  }
+  if (!attending && open && !full && phase == 'upcoming') {
+    return (label: 'Join gathering', action: 'join');
+  }
+  if (phase == 'cancelled') {
+    return (label: 'Cancelled', action: null);
+  }
+  if (phase == 'ended') {
+    return (label: 'Ended', action: null);
+  }
+  if (phase == 'live') {
+    return (
+      label: attending ? "You're registered · started" : 'Started',
+      action: null,
+    );
+  }
+  if (full) {
+    return (label: 'Full', action: null);
+  }
+  return (
+    label: attending ? "You're registered" : 'RSVPs closed',
+    action: null,
+  );
 }

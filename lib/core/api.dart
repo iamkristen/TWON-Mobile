@@ -207,9 +207,14 @@ class DioRepository implements AppRepository {
       );
       final result = asJson(response.data);
       if (result['success'] == false) {
+        final err = asJson(result['error']);
+        final code = err['code']?.toString() ?? '';
         throw AppFailure(
-          asJson(result['error'])['message']?.toString() ??
-              'Could not complete this request.',
+          errorCopy(
+            code,
+            err['message']?.toString() ?? 'Could not complete this request.',
+          ),
+          code: code,
         );
       }
       if (method != 'GET') {
@@ -228,14 +233,21 @@ class DioRepository implements AppRepository {
       return const AppFailure('Request canceled.', code: 'CANCELED');
     }
     final detail = asJson(asJson(error.response?.data)['error']);
+    final code = detail['code']?.toString() ?? '';
+    final retryAfter = _retryAfter(error.response?.headers);
+    // G12 handoffs: clear copy for the backend's new error codes.
     return AppFailure(
-      detail['message']?.toString() ??
-          (error.response == null
-              ? 'Cannot reach TWON. Check your connection and try again.'
-              : 'Could not complete this request. Please try again.'),
-      code: detail['code']?.toString() ?? '',
+      errorCopy(
+        code,
+        detail['message']?.toString() ??
+            (error.response == null
+                ? 'Cannot reach TWON. Check your connection and try again.'
+                : 'Could not complete this request. Please try again.'),
+        retryAfter: retryAfter,
+      ),
+      code: code,
       status: error.response?.statusCode,
-      retryAfter: _retryAfter(error.response?.headers),
+      retryAfter: retryAfter,
     );
   }
 

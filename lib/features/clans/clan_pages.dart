@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme.dart';
 import '../../core/models.dart';
+import '../../core/api.dart';
 import '../../shared/widgets.dart';
 import '../../shared/forms.dart';
 import '../feed/feed_pages.dart';
@@ -452,20 +453,25 @@ class ClanMembersPage extends StatelessWidget {
                                 options: clanTitles,
                                 initial: row.text('title', 'Pup'),
                               ),
+                              // G2 (handoff A): required when lowering a title.
+                              const FieldSpec(
+                                'reason',
+                                'Reason (required when lowering the title; the member sees it)',
+                                kind: FieldKind.multiline,
+                                required: false,
+                                maxLength: 500,
+                              ),
                             ],
-                            submit: (v) async {
-                              await repository(c).request(
-                                'clans/$id/members/$uid/role',
-                                method: 'PATCH',
-                                body: {'role': v['role']},
-                              );
-                              if (!c.mounted) return null;
-                              return repository(c).request(
-                                'clans/$id/members/$uid/title',
-                                method: 'PATCH',
-                                body: {'title': v['title']},
-                              );
-                            },
+                            submit: (v) => saveMemberChange(
+                              repository(c),
+                              clanId: id,
+                              memberId: uid,
+                              currentRole: row.text('role') == 'leader'
+                                  ? 'admin'
+                                  : row.text('role'),
+                              currentTitle: row.text('title', 'Pup'),
+                              values: v,
+                            ),
                             onSuccess: (_) {
                               Navigator.pop(sheet);
                               refresh();
@@ -545,15 +551,50 @@ class ClanRequestsPage extends StatelessWidget {
                       ),
                       onSuccess: (_) => r(),
                     ),
-                    ActionButton(
-                      label: 'Decline',
-                      tonal: true,
-                      action: () => repository(c).request(
-                        'clans/$id/$resource/${row.id}/deny',
-                        method: 'POST',
+                    if (promotions)
+                      // G7 (handoff F): a denial needs a reason the member sees.
+                      TextButton(
+                        onPressed: () => showModalBottomSheet(
+                          context: c,
+                          isScrollControlled: true,
+                          builder: (sheet) => SizedBox(
+                            height: 380,
+                            child: FeatureForm(
+                              title: 'Decline this title request',
+                              button: 'Decline',
+                              fields: const [
+                                FieldSpec(
+                                  'reason',
+                                  'Reason (5–500 characters; the member sees it)',
+                                  kind: FieldKind.multiline,
+                                  maxLength: 500,
+                                ),
+                              ],
+                              submit: (v) => denyTitleRequest(
+                                repository(c),
+                                clanId: id,
+                                requestId: row.id,
+                                reason: '${v['reason'] ?? ''}',
+                              ),
+                              onSuccess: (_) {
+                                Navigator.pop(sheet);
+                                r();
+                              },
+                            ),
+                          ),
+                        ),
+                        child: const Text('Decline'),
+                      )
+                    else
+                      ActionButton(
+                        label: 'Decline',
+                        tonal: true,
+                        action: () => repository(c).request(
+                          'clans/$id/$resource/${row.id}/deny',
+                          method: 'POST',
+                        ),
+                        onSuccess: (_) => r(),
                       ),
-                      onSuccess: (_) => r(),
-                    ),
                   ],
                 ),
             ],
@@ -593,4 +634,77 @@ class ClanFeedPage extends StatelessWidget {
   final String id;
   @override
   Widget build(BuildContext c) => FeedPage(clanId: id);
+}
+
+/// G2 (handoff A): only what changed is sent. Lowering a title needs a reason;
+/// `expectedTitle` lets the backend refuse a stale change (409 CLAN_TITLE_STALE).
+Future<dynamic> saveMemberChange(
+  AppRepository repo, {
+  required String clanId,
+  required String memberId,
+  required String currentRole,
+  required String currentTitle,
+  required Json values,
+}) async {
+  final role = '${values['role'] ?? currentRole}';
+  final title = '${values['title'] ?? currentTitle}';
+  final reason = '${values['reason'] ?? ''}'.trim();
+  final lowering =
+      clanTitles.contains(currentTitle) &&
+      clanTitles.indexOf(title) > clanTitles.indexOf(currentTitle);
+  if (title != currentTitle && lowering && reason.isEmpty) {
+    throw const AppFailure(
+      'Give a reason when lowering a title. The member will see it.',
+      code: 'CLAN_DEMOTION_REASON_REQUIRED',
+    );
+  }
+  if (reason.length > 500) {
+    throw const AppFailure('Keep the reason under 500 characters.');
+  }
+  if (role == currentRole && title == currentTitle) {
+    throw const AppFailure('Nothing changed.');
+  }
+  dynamic result;
+  if (role != currentRole) {
+    result = await repo.request(
+      'clans/$clanId/members/$memberId/role',
+      method: 'PATCH',
+      body: {'role': role},
+    );
+  }
+  if (title != currentTitle) {
+    result = await repo.request(
+      'clans/$clanId/members/$memberId/title',
+      method: 'PATCH',
+      body: {
+        'title': title,
+        'expectedTitle': currentTitle,
+        if (reason.isNotEmpty) 'reason': reason,
+      },
+    );
+  }
+  return result;
+}
+
+/// G7 (handoff F): `{ reason }` is required (5–500 characters).
+Future<dynamic> denyTitleRequest(
+  AppRepository repo, {
+  required String clanId,
+  required String requestId,
+  required String reason,
+}) {
+  final r = reason.trim();
+  if (r.length < 5 || r.length > 500) {
+    return Future.error(
+      const AppFailure(
+        'Give a reason (5–500 characters). The member will see it.',
+        code: 'CLAN_DENIAL_REASON_REQUIRED',
+      ),
+    );
+  }
+  return repo.request(
+    'clans/$clanId/title-requests/$requestId/deny',
+    method: 'POST',
+    body: {'reason': r},
+  );
 }
