@@ -736,69 +736,6 @@ class _SupportPageState extends State<SupportPage> {
   );
 }
 
-class VerificationPage extends StatelessWidget {
-  const VerificationPage({super.key});
-  @override
-  Widget build(BuildContext c) => DetailView(
-    path: 'verification/status',
-    builder: (d, status, r) => Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        PageHeading(
-          'Identity verification',
-          'Status: ${status.text('status', 'none')}',
-        ),
-        if (status.object('request')['rejectionReason'] != null)
-          Text('${status.object('request')['rejectionReason']}'),
-        if (!['approved', 'pending'].contains(status.text('status')))
-          SizedBox(
-            height: 700,
-            child: FeatureForm(
-              title: 'Submit verification',
-              description:
-                  'Only upload your own document and a clear selfie. Authorized reviewers handle your request.',
-              fields: const [
-                FieldSpec(
-                  'documentType',
-                  'Document type',
-                  kind: FieldKind.select,
-                  options: [
-                    'passport',
-                    'drivingLicense',
-                    'nationalId',
-                    'other',
-                  ],
-                ),
-                // Private uploads (F-05 B3): submit the stable `ref`, preview `url`.
-                FieldSpec(
-                  'documentImage',
-                  'Identity document',
-                  kind: FieldKind.image,
-                  uploadEndpoint: 'verification/uploads',
-                  uploadReferenceKey: 'ref',
-                ),
-                FieldSpec(
-                  'selfieImage',
-                  'Selfie',
-                  kind: FieldKind.image,
-                  uploadEndpoint: 'verification/uploads',
-                  uploadReferenceKey: 'ref',
-                ),
-              ],
-              submit: (v) => repository(
-                c,
-              ).request('verification/submit', method: 'POST', body: v),
-              onSuccess: (_) {
-                r();
-                notice(c, 'Verification submitted.');
-              },
-            ),
-          ),
-      ],
-    ),
-  );
-}
-
 class LookbookPage extends StatelessWidget {
   const LookbookPage({super.key});
   @override

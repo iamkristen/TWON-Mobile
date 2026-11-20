@@ -7,7 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
 import 'package:twon_mobile/shared/widgets.dart';
 import 'social_experience_test.dart' show Harness;
-import 'verification_private_upload_test.dart' show FakeImagePicker;
+import 'fake_image_picker.dart' show FakeImagePicker;
 
 const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
 const _uid = '65f00000000000000000000a';

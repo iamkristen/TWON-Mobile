@@ -66,7 +66,18 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-<key>NSCameraUsageDescription</key><string>Take photos for posts, your profile and identity verification.</string>
+<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.twon.identity</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>twon</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSCameraUsageDescription</key><string>Take photos for posts, your profile and identity verification.</string>
 <key>NSPhotoLibraryUsageDescription</key><string>Choose photos to share with your pack.</string>
 <key>NSMicrophoneUsageDescription</key><string>Record voice messages for your conversations.</string>
 <key>NSLocalNetworkUsageDescription</key><string>Connect to the local TWON development server.</string>

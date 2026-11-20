@@ -580,9 +580,15 @@ class DioRepository implements AppRepository {
       if (CancelToken.isCancel(error)) {
         throw const AppFailure('Request canceled.', code: 'CANCELED');
       }
+      // Keep the server's code and status (the identity capture flow reacts to them).
+      final detail = asJson(asJson(error.response?.data)['error']);
+      final code = detail['code']?.toString() ?? '';
+      final retryAfter = _retryAfter(error.response?.headers);
       throw AppFailure(
-        asJson(asJson(error.response?.data)['error'])['message']?.toString() ??
-            'Upload failed. Please select the file again.',
+        errorCopy(code, detail['message']?.toString() ?? 'Upload failed. Please select the file again.', retryAfter: retryAfter),
+        code: code,
+        status: error.response?.statusCode,
+        retryAfter: retryAfter,
       );
     }
   }

@@ -17,6 +17,7 @@ import 'features/gatherings/gathering_pages.dart';
 import 'features/chat/chat_pages.dart';
 import 'features/shop/shop_pages.dart';
 import 'features/account/account_pages.dart';
+import 'features/account/identity_verification.dart';
 import 'features/account/settings_pages.dart';
 import 'shared/widgets.dart';
 import 'shared/brand_motion.dart';
@@ -312,10 +313,24 @@ GoRouter _router(AuthCubit auth, Listenable refresh) {
             path: '/notifications',
             builder: (_, _) => const NotificationsPage(),
           ),
+          // IV-E2E: camera capture through IV4 sessions; the website hands off by QR or code.
           GoRoute(
             path: '/verification',
-            builder: (_, _) => const VerificationPage(),
+            builder: (_, _) => const IdentityVerificationPage(),
           ),
+          GoRoute(
+            path: '/verification/capture',
+            builder: (_, s) => IdentityCapturePage(session: asJson(s.extra)),
+          ),
+          // twon://identity/pair?t=<token> (QR from the website), or a typed 6-digit code.
+          for (final path in const ['/identity/pair', '/pair'])
+            GoRoute(
+              path: path,
+              builder: (_, s) => IdentityPairPage(
+                token: s.uri.queryParameters['t'],
+                code: asJson(s.extra)['code']?.toString(),
+              ),
+            ),
           GoRoute(path: '/support', builder: (_, _) => const SupportPage()),
           GoRoute(path: '/settings', builder: (_, _) => const SettingsPage()),
           GoRoute(
