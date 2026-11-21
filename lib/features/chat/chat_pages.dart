@@ -20,12 +20,15 @@ import '../auth/auth_cubit.dart';
 import '../account/account_pages.dart';
 import 'chat_bloc.dart';
 import 'message_actions.dart';
+import 'group_membership.dart';
 
 class ConversationsPage extends StatelessWidget {
   const ConversationsPage({super.key});
   @override
   Widget build(BuildContext c) => CollectionView(
     path: 'conversations',
+    // CHAT-1 (S01): invitations to accept or decline.
+    header: const GroupInvitesPanel(),
     empty: 'Start a conversation with a pack member.',
     emptyAsset: 'pack-gathering',
     builder: (d, row, r) {
@@ -621,6 +624,20 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
               PopupMenuButton<String>(
                 tooltip: 'Chat options',
                 onSelected: (value) async {
+                  if (value == 'members') {
+                    await showGroupMembers(
+                      c,
+                      conversationId: widget.id,
+                      conversation: widget.conversation,
+                      onLeft: () {
+                        if (c.mounted) {
+                          notice(c, 'You left the group.');
+                          c.pop();
+                        }
+                      },
+                    );
+                    return;
+                  }
                   try {
                     await repository(c).request(
                       'conversations/${widget.id}/mute',
@@ -638,6 +655,11 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                   }
                 },
                 itemBuilder: (_) => [
+                  if (isManagedGroup(widget.conversation))
+                    const PopupMenuItem(
+                      value: 'members',
+                      child: Text('Group members'),
+                    ),
                   const PopupMenuItem(
                     value: 'mute',
                     child: Text('Mute notifications'),
@@ -763,14 +785,28 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                                       ),
                                     )
                                   else ...[
-                                    if (message.text('body').isNotEmpty)
-                                      Text(message.text('body')),
+                                    // CHAT-1 (F01): the caption is optional; no placeholder text.
+                                    if (chatCaption(
+                                      message.text('body'),
+                                      message.text('attachment').isNotEmpty ||
+                                          message.rows('attachments').isNotEmpty,
+                                    ).isNotEmpty)
+                                      Text(
+                                        chatCaption(
+                                          message.text('body'),
+                                          message.text('attachment').isNotEmpty ||
+                                              message
+                                                  .rows('attachments')
+                                                  .isNotEmpty,
+                                        ),
+                                      ),
                                     if (message.text('attachment').isNotEmpty)
                                       MessageAttachment(
                                         message.text('attachment'),
                                         thumbnail: message.text(
                                           'attachmentThumbnail',
                                         ),
+                                        kind: message.text('attachmentKind'),
                                       ),
                                     ...message
                                         .rows('attachments')
@@ -779,6 +815,7 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                                             '${a['url']}',
                                             thumbnail:
                                                 '${a['thumbnail'] ?? ''}',
+                                            kind: '${a['kind'] ?? ''}',
                                           ),
                                         ),
                                     MessageReactionChips(
@@ -994,8 +1031,16 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
 }
 
 class MessageAttachment extends StatefulWidget {
-  const MessageAttachment(this.url, {super.key, this.thumbnail = ''});
+  const MessageAttachment(
+    this.url, {
+    super.key,
+    this.thumbnail = '',
+    this.kind = '',
+  });
   final String url, thumbnail;
+
+  /// CHAT-1: the server's attachment kind ('' for older messages: the URL decides).
+  final String kind;
   @override
   State<MessageAttachment> createState() => _MessageAttachmentState();
 }
@@ -1021,8 +1066,8 @@ class _MessageAttachmentState extends State<MessageAttachment> {
 
   @override
   Widget build(BuildContext c) {
-    final path = Uri.tryParse(widget.url)?.path.toLowerCase() ?? '';
-    if (RegExp(r'\.(m4a|mp3|aac|wav|ogg)$').hasMatch(path)) {
+    final kind = chatAttachmentKind(widget.url, widget.kind);
+    if (kind == 'audio') {
       return TextButton.icon(
         onPressed: () async {
           try {
@@ -1040,8 +1085,7 @@ class _MessageAttachmentState extends State<MessageAttachment> {
         label: const Text('Voice message'),
       );
     }
-    if (widget.thumbnail.isNotEmpty ||
-        RegExp(r'\.(png|jpg|jpeg|webp|gif)$').hasMatch(path)) {
+    if (kind == 'image' || kind == 'gif' || widget.thumbnail.isNotEmpty) {
       return InkWell(
         onTap: () => openUrl(widget.url),
         child: BrandImage(

@@ -148,6 +148,9 @@ class RealtimeService {
       'chat:message_updated',
       'chat:message_deleted',
       'chat:reaction',
+      // CHAT-1: read positions (own devices, receipts) and membership changes.
+      'chat:read',
+      'chat:conversation_changed',
       'notification:new',
     ]) {
       socket!.on(

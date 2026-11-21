@@ -118,12 +118,16 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       final message = event.payload['message'];
       switch (event.name) {
         case 'chat:message' when message is Map:
-          add(ChatIncoming(Entity(asJson(message))));
-          _scheduleRead();
+          final incoming = Entity(asJson(message));
+          add(ChatIncoming(incoming));
+          _scheduleRead(incoming.id);
         case 'chat:message_updated' when message is Map:
           add(ChatPatch(Entity(asJson(message))));
         case 'chat:message_deleted' when event.payload['messageId'] is String:
           add(ChatRemove(event.payload['messageId'] as String));
+        // CHAT-1: joined, left or removed: reload (a removed member gets a 403).
+        case 'chat:conversation_changed':
+          add(ChatLoad());
         default:
           _scheduleReload(); // reactions and unknown shapes: one reload per burst
       }
@@ -138,13 +142,22 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   Timer? _readTimer;
   Timer? _reloadTimer;
 
-  /// One read receipt per burst of incoming messages (loads mark read server-side).
-  void _scheduleRead() {
+  /// CHAT-1 (F03): one read receipt per burst, up to the newest message shown.
+  /// Loading a page marks nothing on the server.
+  String? _readUpTo;
+  void _scheduleRead(String upTo) {
+    _readUpTo = upTo;
     _readTimer?.cancel();
     _readTimer = Timer(const Duration(seconds: 1), () {
-      if (!active || isClosed) return;
+      final position = _readUpTo;
+      _readUpTo = null;
+      if (!active || isClosed || position == null) return;
       repository
-          .request('conversations/$id/read', method: 'PATCH')
+          .request(
+            'conversations/$id/read',
+            method: 'PATCH',
+            body: {'upTo': position},
+          )
           .catchError((_) => null);
     });
   }
@@ -196,7 +209,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
           sent: state.sent,
         ),
       );
-      // Loading messages marks them read on the server; no separate PATCH.
+      // CHAT-1 (F03): read up to the newest message now on screen (the list
+      // opens at the newest message); loading older pages marks nothing more.
+      if (!event.older && messages.isNotEmpty) _scheduleRead(messages.first.id);
     } catch (error) {
       if (!emit.isDone) {
         emit(state.copy(loading: false, error: error.toString()));
