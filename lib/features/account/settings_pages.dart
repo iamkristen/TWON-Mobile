@@ -42,6 +42,11 @@ class SettingsPage extends StatelessWidget {
           children:
               [
                 (
+                  Icons.gavel_rounded,
+                  'Chat moderation decisions',
+                  '/settings/moderation',
+                ),
+                (
                   Icons.notifications_outlined,
                   'Notifications & privacy',
                   '/settings/preferences',
@@ -124,6 +129,16 @@ class PreferencesPage extends StatelessWidget {
             kind: FieldKind.toggle,
             initial: p['showLocation'] ?? true,
           ),
+          // CHAT-2: existing conversations are not affected.
+          FieldSpec(
+            'whoCanMessage',
+            'Who can message me',
+            kind: FieldKind.select,
+            options: const ['everyone', 'following', 'nobody'],
+            initial: p['whoCanMessage'] ?? 'everyone',
+            hint:
+                'Following: people you follow; others send a request. Nobody: no one new.',
+          ),
           // G3 (handoff B): off by default; off hides you from leaderboards
           // and your total from others at once.
           FieldSpec(
@@ -145,7 +160,10 @@ class PreferencesPage extends StatelessWidget {
                 'mentions': v['mentions'],
                 'messages': v['messages'],
               },
-              'privacy': {'showLocation': v['showLocation']},
+              'privacy': {
+                'showLocation': v['showLocation'],
+                'whoCanMessage': v['whoCanMessage'],
+              },
               'ranking': {'public': v['rankingPublic'] == true},
             },
           },

@@ -21,6 +21,7 @@ import '../account/account_pages.dart';
 import 'chat_bloc.dart';
 import 'message_actions.dart';
 import 'group_membership.dart';
+import 'chat_safety.dart';
 
 class ConversationsPage extends StatelessWidget {
   const ConversationsPage({super.key});
@@ -28,7 +29,9 @@ class ConversationsPage extends StatelessWidget {
   Widget build(BuildContext c) => CollectionView(
     path: 'conversations',
     // CHAT-1 (S01): invitations to accept or decline.
-    header: const GroupInvitesPanel(),
+    header: const Column(
+      children: [MessageRequestsPanel(), GroupInvitesPanel()],
+    ),
     empty: 'Start a conversation with a pack member.',
     emptyAsset: 'pack-gathering',
     builder: (d, row, r) {
@@ -62,7 +65,11 @@ class ConversationTile extends StatelessWidget {
       unread: unread > 0,
       child: ListTile(
         contentPadding: const EdgeInsets.fromLTRB(14, 8, 12, 8),
-        leading: MemberAvatar(others.firstOrNull ?? {'fullName': title}),
+        leading: MemberAvatar(
+          row.text('image').isNotEmpty
+              ? {'fullName': title, 'avatar': row.text('image')}
+              : others.firstOrNull ?? {'fullName': title},
+        ),
         title: Text(
           title.isEmpty ? 'Pack chat' : title,
           maxLines: 1,
@@ -363,15 +370,50 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
   Entity? reply;
   bool uploading = false, recording = false;
   String? attachment, thumbnail, voicePath;
+
+  /// CHAT-2: loaded when the chat was opened without it (invitation, request,
+  /// deep link) and refreshed on membership or role changes.
+  late Json conversation = widget.conversation;
+  bool canModerate = false;
+  StreamSubscription<RealtimeEvent>? changes;
+
+  Future<void> loadConversation() async {
+    final api = repository(context);
+    try {
+      final data = asJson(await api.request('conversations/${widget.id}'));
+      if (mounted && data.isNotEmpty) setState(() => conversation = data);
+    } catch (_) {
+      // No longer a member: the message list shows the refusal.
+    }
+    if ('${conversation['clanId'] ?? ''}'.isEmpty) return;
+    try {
+      final state = asJson(await api.request('moderation/chats/${widget.id}'));
+      if (mounted) setState(() => canModerate = state['canModerate'] == true);
+    } catch (_) {
+      if (mounted) setState(() => canModerate = false);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    if (conversation.isEmpty || '${conversation['clanId'] ?? ''}'.isNotEmpty) {
+      loadConversation();
+    }
+    changes = context.read<RealtimeService>().events.stream.listen((event) {
+      if (mounted &&
+          event.name == 'chat:conversation_changed' &&
+          event.payload['conversationId'] == widget.id) {
+        loadConversation();
+      }
+    });
     WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    changes?.cancel();
     input.dispose();
     inputFocus.dispose();
     recorder.dispose();
@@ -498,6 +540,7 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
         context: context,
         message: message,
         userId: me,
+        canModerate: canModerate && !own,
       );
     } finally {
       menuOpen = false;
@@ -515,6 +558,18 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
         if (mounted) notice(context, 'Message copied');
       case 'report':
         showReport(context, 'message', message.id);
+      case 'moderate':
+        final reason = await chooseReason(context, 'Remove this message?');
+        if (reason == null) return;
+        try {
+          await api.request(
+            'moderation/chats/${widget.id}/messages/${message.id}/remove',
+            method: 'POST',
+            body: {'reasonCode': reason},
+          );
+        } catch (error) {
+          if (mounted) notice(context, error.toString());
+        }
       case 'edit':
         if (!own) return;
         showModalBottomSheet(
@@ -605,7 +660,7 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
     },
     builder: (d, s) {
       final bloc = d.read<ChatBloc>();
-      final blocked = widget.conversation['dmMessagingBlocked'] == true;
+      final blocked = conversation['dmMessagingBlocked'] == true;
       return Column(
         children: [
           Row(
@@ -614,8 +669,8 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Text(
-                    widget.conversation['name']?.toString().isNotEmpty == true
-                        ? '${widget.conversation['name']}'
+                    conversation['name']?.toString().isNotEmpty == true
+                        ? '${conversation['name']}'
                         : 'Pack conversation',
                     style: Theme.of(c).textTheme.titleMedium,
                   ),
@@ -624,11 +679,15 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
               PopupMenuButton<String>(
                 tooltip: 'Chat options',
                 onSelected: (value) async {
+                  if (value == 'moderation') {
+                    await showClanModeration(c, widget.id, conversation);
+                    return;
+                  }
                   if (value == 'members') {
                     await showGroupMembers(
                       c,
                       conversationId: widget.id,
-                      conversation: widget.conversation,
+                      conversation: conversation,
                       onLeft: () {
                         if (c.mounted) {
                           notice(c, 'You left the group.');
@@ -655,10 +714,15 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                   }
                 },
                 itemBuilder: (_) => [
-                  if (isManagedGroup(widget.conversation))
+                  if (isManagedGroup(conversation))
                     const PopupMenuItem(
                       value: 'members',
                       child: Text('Group members'),
+                    ),
+                  if ('${conversation['clanId'] ?? ''}'.isNotEmpty)
+                    const PopupMenuItem(
+                      value: 'moderation',
+                      child: Text('Chat moderation'),
                     ),
                   const PopupMenuItem(
                     value: 'mute',
@@ -672,6 +736,39 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
               ),
             ],
           ),
+          if (conversation['requestState'] == 'sent')
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                'Message request sent. You can send more once it is accepted.',
+              ),
+            ),
+          if (conversation['requestState'] == 'incoming')
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Column(
+                children: [
+                  const Text(
+                    'They will not know you have seen this until you accept. Replying accepts the request.',
+                  ),
+                  RequestActions(
+                    conversationId: widget.id,
+                    senderId: entityId(
+                      ((conversation['participants'] as List?) ?? const [])
+                          .firstWhere(
+                            (p) => entityId(p) != c.read<AuthCubit>().userId,
+                            orElse: () => '',
+                          ),
+                    ),
+                    onReport: s.messages.isEmpty
+                        ? null
+                        : () => showReport(c, 'message', s.messages.last.id),
+                    onAnswered: (accepted) =>
+                        accepted ? loadConversation() : c.pop(),
+                  ),
+                ],
+              ),
+            ),
           Expanded(
             child: s.loading && s.messages.isEmpty
                 ? const Center(
@@ -778,9 +875,11 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                                       ),
                                     ),
                                   if (message.flag('isDeleted'))
-                                    const Text(
-                                      'This message was deleted',
-                                      style: TextStyle(
+                                    Text(
+                                      message.text('removedBy').isEmpty
+                                          ? 'This message was deleted'
+                                          : 'This message was removed by a moderator',
+                                      style: const TextStyle(
                                         fontStyle: FontStyle.italic,
                                       ),
                                     )

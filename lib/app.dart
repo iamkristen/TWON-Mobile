@@ -8,6 +8,7 @@ import 'core/api.dart';
 import 'core/models.dart';
 import 'core/theme.dart';
 import 'core/realtime.dart';
+import 'features/chat/chat_safety.dart';
 import 'features/auth/auth_cubit.dart';
 import 'features/auth/auth_pages.dart';
 import 'features/feed/feed_pages.dart';
@@ -336,6 +337,10 @@ GoRouter _router(AuthCubit auth, Listenable refresh) {
           GoRoute(
             path: '/settings/preferences',
             builder: (_, _) => const PreferencesPage(),
+          ),
+          GoRoute(
+            path: '/settings/moderation',
+            builder: (_, _) => const ModerationDecisionsPage(),
           ),
           GoRoute(
             path: '/settings/password',

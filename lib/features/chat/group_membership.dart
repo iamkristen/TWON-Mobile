@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../core/api.dart';
 import '../../core/collection_cubit.dart';
 import '../../core/models.dart';
@@ -221,16 +222,85 @@ class _GroupMembersSheetState extends State<GroupMembersSheet> {
     }
   }
 
-  /// The latest membership (there is no single-conversation endpoint).
   Future<void> refresh() async {
-    final page = await widget.repository.page(
-      'conversations',
-      query: {'limit': 100},
+    final data = asJson(
+      await widget.repository.request('conversations/${widget.conversationId}'),
     );
-    for (final row in page.items) {
-      if (row.id == widget.conversationId && mounted) {
-        setState(() => conversation = row.data);
+    if (mounted && data.isNotEmpty) setState(() => conversation = data);
+  }
+
+  /// CHAT-2: name, image and invitations (admins).
+  Future<String?> ask(String title, String initial) => showDialog<String>(
+    context: context,
+    builder: (_) => _NameDialog(title: title, initial: initial),
+  );
+
+  Future<void> rename() async {
+    final name = await ask('Group name', '${conversation['name'] ?? ''}');
+    if (name != null) {
+      await run(
+        'conversations/${widget.conversationId}',
+        'PATCH',
+        body: {'name': name},
+      );
+    }
+  }
+
+  Future<void> changeImage() async {
+    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (picked == null || !mounted) return;
+    try {
+      final data = await widget.repository.upload(picked.path);
+      await run(
+        'conversations/${widget.conversationId}',
+        'PATCH',
+        body: {'image': data['url']},
+      );
+    } catch (error) {
+      if (mounted) notice(context, error.toString());
+    }
+  }
+
+  Future<void> invite() async {
+    final q = await ask('Invite: name or @handle', '');
+    if (q == null || !mounted) return;
+    try {
+      final page = await widget.repository.page(
+        'users/search',
+        query: {'q': q},
+      );
+      if (!mounted) return;
+      final taken = {
+        for (final p in [...?(conversation['participants'] as List?)])
+          entityId(p),
+        for (final i in [...?(conversation['invites'] as List?)])
+          entityId(asJson(i)['userId']),
+      };
+      final id = await showDialog<String>(
+        context: context,
+        builder: (d) => SimpleDialog(
+          title: const Text('Invite to group'),
+          children: [
+            for (final u in page.items.where((u) => !taken.contains(u.id)))
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(d, u.id),
+                child: Text('${u.text('fullName')} (@${u.text('handle')})'),
+              ),
+          ],
+        ),
+      );
+      if (id != null) {
+        await run(
+          'conversations/${widget.conversationId}/invites',
+          'POST',
+          body: {
+            'userIds': [id],
+          },
+          done: 'Invitation sent.',
+        );
       }
+    } catch (error) {
+      if (mounted) notice(context, error.toString());
     }
   }
 
@@ -293,12 +363,13 @@ class _GroupMembersSheetState extends State<GroupMembersSheet> {
                                           'Remove member?',
                                           '${name(m)} will lose access to this group straight away.',
                                         );
-                                        if (ok)
+                                        if (ok) {
                                           await run(
                                             'conversations/$id/members/$uid',
                                             'DELETE',
                                             done: 'Member removed.',
                                           );
+                                        }
                                       case 'admin':
                                         await run(
                                           'conversations/$id/admins/$uid',
@@ -310,13 +381,14 @@ class _GroupMembersSheetState extends State<GroupMembersSheet> {
                                           'Transfer ownership?',
                                           '${name(m)} will own this group. You stay an admin.',
                                         );
-                                        if (ok)
+                                        if (ok) {
                                           await run(
                                             'conversations/$id/owner',
                                             'POST',
                                             body: {'userId': uid},
                                             done: 'Ownership transferred.',
                                           );
+                                        }
                                     }
                                   },
                                   itemBuilder: (_) => [
@@ -345,16 +417,45 @@ class _GroupMembersSheetState extends State<GroupMembersSheet> {
                         );
                       },
                     ),
+                  for (final i in [...?(conversation['invites'] as List?)])
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      title: Text(
+                        '${asJson(asJson(i)['userId'])['fullName'] ?? 'Pack member'}',
+                      ),
+                      subtitle: const Text('Invited'),
+                      trailing: iAmAdmin
+                          ? TextButton(
+                              onPressed: busy
+                                  ? null
+                                  : () => run(
+                                      'conversations/$id/invites/${entityId(asJson(i)['userId'])}',
+                                      'DELETE',
+                                    ),
+                              child: const Text('Withdraw'),
+                            )
+                          : null,
+                    ),
                 ],
               ),
             ),
-            if ((conversation['invites'] as List? ?? const []).isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Text(
-                  '${(conversation['invites'] as List).length} pending invitations',
-                  style: Theme.of(c).textTheme.bodySmall,
-                ),
+            if (iAmAdmin)
+              Wrap(
+                children: [
+                  TextButton(
+                    onPressed: busy ? null : rename,
+                    child: const Text('Rename'),
+                  ),
+                  TextButton(
+                    onPressed: busy ? null : changeImage,
+                    child: const Text('Change image'),
+                  ),
+                  TextButton(
+                    onPressed: busy ? null : invite,
+                    child: const Text('Invite'),
+                  ),
+                ],
               ),
             const SizedBox(height: 8),
             OutlinedButton.icon(
@@ -391,4 +492,42 @@ class _GroupMembersSheetState extends State<GroupMembersSheet> {
       ),
     );
   }
+}
+
+class _NameDialog extends StatefulWidget {
+  const _NameDialog({required this.title, required this.initial});
+  final String title, initial;
+  @override
+  State<_NameDialog> createState() => _NameDialogState();
+}
+
+class _NameDialogState extends State<_NameDialog> {
+  late final text = TextEditingController(text: widget.initial);
+  @override
+  void dispose() {
+    text.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext c) => AlertDialog(
+    title: Text(widget.title),
+    content: TextField(
+      controller: text,
+      maxLength: 200,
+      onChanged: (_) => setState(() {}),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(c),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: text.text.trim().isEmpty
+            ? null
+            : () => Navigator.pop(c, text.text.trim()),
+        child: const Text('OK'),
+      ),
+    ],
+  );
 }

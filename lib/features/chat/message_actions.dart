@@ -24,6 +24,7 @@ Future<MessageActionResult?> showMessageActions({
   required BuildContext context,
   required Entity message,
   required String userId,
+  bool canModerate = false,
 }) => showGeneralDialog<MessageActionResult>(
   context: context,
   barrierDismissible: true,
@@ -33,7 +34,11 @@ Future<MessageActionResult?> showMessageActions({
       ? Duration.zero
       : const Duration(milliseconds: 160),
   pageBuilder: (c, _, _) =>
-      MessageActionsPanel(message: message, userId: userId),
+      MessageActionsPanel(
+        message: message,
+        userId: userId,
+        canModerate: canModerate,
+      ),
 );
 
 class MessageActionsPanel extends StatefulWidget {
@@ -41,9 +46,11 @@ class MessageActionsPanel extends StatefulWidget {
     super.key,
     required this.message,
     required this.userId,
+    this.canModerate = false,
   });
   final Entity message;
   final String userId;
+  final bool canModerate;
   @override
   State<MessageActionsPanel> createState() => _MessageActionsPanelState();
 }
@@ -184,6 +191,12 @@ class _MessageActionsPanelState extends State<MessageActionsPanel> {
                       title: const Text('Report message'),
                       onTap: () => choose('report'),
                     ),
+                    if (widget.canModerate)
+                      ListTile(
+                        leading: const Icon(Icons.gavel_rounded),
+                        title: const Text('Remove as moderator'),
+                        onTap: () => choose('moderate'),
+                      ),
                     if (own)
                       ListTile(
                         leading: Icon(
