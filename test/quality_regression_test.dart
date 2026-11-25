@@ -100,6 +100,9 @@ void main() {
         loads++;
         return ApiPage([
           Entity({'id': 'message-$loads', 'createdAt': '2026-10-08T00:00:00Z'}),
+          // CHAT-4: a refresh reaches what is loaded (one that does not is a gap: chat_4_test.dart).
+          if (loads == 3)
+            Entity({'id': 'message-1', 'createdAt': '2026-10-08T00:00:00Z'}),
         ], loads == 2 ? null : 'cursor-$loads');
       });
       when(

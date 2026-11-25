@@ -445,10 +445,9 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
       }
       if (path == null || !mounted) return;
       setState(() => uploading = true);
-      final data = await repository(context).upload(
-        path,
-        endpoint: chatUploadEndpoint,
-      );
+      final data = await repository(
+        context,
+      ).upload(path, endpoint: chatUploadEndpoint);
       if (mounted) {
         setState(() {
           attachment = data['url'];
@@ -488,10 +487,9 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
       if (mounted) setState(() => recording = false);
       if (path == null || !mounted) return;
       setState(() => uploading = true);
-      final data = await repository(context).upload(
-        path,
-        endpoint: chatUploadEndpoint,
-      );
+      final data = await repository(
+        context,
+      ).upload(path, endpoint: chatUploadEndpoint);
       await File(path).delete().catchError((_) => File(path));
       if (mounted) setState(() => attachment = data['url']);
     } catch (error) {
@@ -895,12 +893,16 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                                     if (chatCaption(
                                       message.text('body'),
                                       message.text('attachment').isNotEmpty ||
-                                          message.rows('attachments').isNotEmpty,
+                                          message
+                                              .rows('attachments')
+                                              .isNotEmpty,
                                     ).isNotEmpty)
                                       Text(
                                         chatCaption(
                                           message.text('body'),
-                                          message.text('attachment').isNotEmpty ||
+                                          message
+                                                  .text('attachment')
+                                                  .isNotEmpty ||
                                               message
                                                   .rows('attachments')
                                                   .isNotEmpty,
@@ -945,23 +947,15 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                                               left: 4,
                                             ),
                                             child: Icon(
-                                              message.strings('readBy').length >
-                                                      1
+                                              readByOthers(message, c.read<AuthCubit>().userId)
                                                   ? Icons.done_all
                                                   : Icons.done,
                                               size: 15,
                                               semanticLabel:
-                                                  message
-                                                          .strings('readBy')
-                                                          .length >
-                                                      1
+                                                  readByOthers(message, c.read<AuthCubit>().userId)
                                                   ? 'Read'
                                                   : 'Sent',
-                                              color:
-                                                  message
-                                                          .strings('readBy')
-                                                          .length >
-                                                      1
+                                              color: readByOthers(message, c.read<AuthCubit>().userId)
                                                   ? TwonPalette.moonBlue
                                                   : null,
                                             ),
@@ -1209,9 +1203,7 @@ class _MessageAttachmentState extends State<MessageAttachment> {
         label: const Text('Voice message'),
       );
     }
-    final preview = widget.thumbnail.isNotEmpty
-        ? widget.thumbnail
-        : widget.url;
+    final preview = widget.thumbnail.isNotEmpty ? widget.thumbnail : widget.url;
     if (kind == 'image' || kind == 'gif' || widget.thumbnail.isNotEmpty) {
       return InkWell(
         onTap: open,

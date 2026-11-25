@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:bloc_concurrency/bloc_concurrency.dart';
 import '../../core/api.dart';
@@ -32,6 +34,34 @@ class ChatSend extends ChatEvent {
   ChatSend(this.body);
   final Json body;
 }
+
+/// CHAT-4: a pushed message names its sender (a large clan's conversation does
+/// not list every member).
+Entity withSender(Json message) => Entity({
+  ...message,
+  if (message['sender'] is Map) 'senderId': message['sender'],
+});
+
+/// CHAT-4: anyone else's receipt means read (the sender's own id is no longer
+/// recorded since CHAT-1, so one reader is enough).
+bool readByOthers(Entity message, String? me) =>
+    message.strings('readBy').any((id) => id != me);
+
+/// CHAT-4: the sender's own name for one message; a retry with it never sends twice.
+String newClientMessageId([Random? random]) {
+  final source = random ?? Random.secure();
+  return List.generate(
+    16,
+    (_) => source.nextInt(256).toRadixString(16).padLeft(2, '0'),
+  ).join();
+}
+
+/// The outcome is unknown, or the server asks to try again; anything else is an answer.
+bool isRetryableSend(Object error) =>
+    error is AppFailure &&
+    (error.code == 'MESSAGE_IN_PROGRESS' ||
+        (error.status == null && error.code != 'CANCELED') ||
+        const [502, 503, 504].contains(error.status));
 
 class ChatState {
   const ChatState({
@@ -118,7 +148,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       final message = event.payload['message'];
       switch (event.name) {
         case 'chat:message' when message is Map:
-          final incoming = Entity(asJson(message));
+          final incoming = withSender(asJson(message));
           add(ChatIncoming(incoming));
           _scheduleRead(incoming.id);
         case 'chat:message_updated' when message is Map:
@@ -191,8 +221,20 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       if (event.older || firstLoad) {
         _historyExhausted = page.cursor == null;
       }
+      // CHAT-4: after a long interruption the newest page may not reach what is
+      // already loaded. Showing both would hide the messages in between with no
+      // way to load them, so the list starts again from the newest page.
+      final gap =
+          !event.older &&
+          !firstLoad &&
+          page.cursor != null &&
+          state.messages.isNotEmpty &&
+          !page.items.any((m) => state.messages.any((s) => s.id == m.id));
+      if (gap) _historyExhausted = false;
       final rows = event.older
           ? [...state.messages, ...page.items]
+          : gap
+          ? page.items
           : [...page.items, ...state.messages];
       final unique = <String, Entity>{};
       for (final row in rows) {
@@ -205,7 +247,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
           messages: messages,
           loading: false,
           sending: state.sending,
-          cursor: event.older || firstLoad ? page.cursor : state.cursor,
+          cursor: event.older || firstLoad || gap ? page.cursor : state.cursor,
           sent: state.sent,
         ),
       );
@@ -222,15 +264,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   Future<void> _send(ChatSend event, Emitter<ChatState> emit) async {
     emit(state.copy(sending: true));
     try {
-      final row = Entity(
-        asJson(
-          await repository.request(
-            'conversations/$id/messages',
-            method: 'POST',
-            body: event.body,
-          ),
-        ),
-      );
+      final row = Entity(asJson(await _sendOnce(event.body)));
       if (emit.isDone) return;
       emit(
         state.copy(
@@ -242,6 +276,47 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     } catch (error) {
       if (!emit.isDone) {
         emit(state.copy(sending: false, error: error.toString()));
+      }
+    }
+  }
+
+  /// Delays before retrying a send whose outcome is unknown.
+  static List<Duration> sendRetryDelays = const [
+    Duration(seconds: 1),
+    Duration(seconds: 3),
+  ];
+
+  /// Ids of sends that failed, by content: sending the same again is the same message.
+  final _failedSends = <String, String>{};
+
+  Future<dynamic> _sendOnce(Json body) async {
+    final key = jsonEncode(body);
+    final clientMessageId = _failedSends[key] ?? newClientMessageId();
+    for (var attempt = 0; ; attempt++) {
+      try {
+        final result = await repository.request(
+          'conversations/$id/messages',
+          method: 'POST',
+          body: {...body, 'clientMessageId': clientMessageId},
+        );
+        _failedSends.remove(key);
+        return result;
+      } catch (error) {
+        final retryable = isRetryableSend(error);
+        if (retryable && attempt < sendRetryDelays.length) {
+          await Future<void>.delayed(sendRetryDelays[attempt]);
+          if (!isClosed) continue;
+        }
+        // Refused for good: sending again is a new message.
+        if (retryable) {
+          _failedSends[key] = clientMessageId;
+          if (_failedSends.length > 50) {
+            _failedSends.remove(_failedSends.keys.first);
+          }
+        } else {
+          _failedSends.remove(key);
+        }
+        rethrow;
       }
     }
   }

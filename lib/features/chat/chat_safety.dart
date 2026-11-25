@@ -224,6 +224,7 @@ class ClanModerationSheet extends StatefulWidget {
 class _ClanModerationSheetState extends State<ClanModerationSheet> {
   Json state = const {};
   bool busy = false;
+  Json? everyone;
   String get base => 'moderation/chats/${widget.conversationId}';
 
   @override
@@ -236,6 +237,20 @@ class _ClanModerationSheetState extends State<ClanModerationSheet> {
     try {
       final data = asJson(await repository(context).request(base));
       if (mounted) setState(() => state = data);
+      // CHAT-4: a large clan's conversation lists only part of its members.
+      final listed = [
+        ...?(widget.conversation['participants'] as List?),
+      ].length;
+      final total = widget.conversation['participantCount'];
+      if (mounted && everyone == null && total is num && total > listed) {
+        final all = asJson(
+          await repository(context).request(
+            'conversations/${widget.conversationId}',
+            query: {'members': 'all'},
+          ),
+        );
+        if (mounted && all.isNotEmpty) setState(() => everyone = all);
+      }
     } catch (error) {
       if (mounted) notice(context, error.toString());
     }
@@ -283,7 +298,9 @@ class _ClanModerationSheetState extends State<ClanModerationSheet> {
         '${asJson(r)['userId']}',
     };
     final isLeader = state['isLeader'] == true;
-    final members = [...?(widget.conversation['participants'] as List?)];
+    final members = [
+      ...?((everyone ?? widget.conversation)['participants'] as List?),
+    ];
     return SafeArea(
       child: ListView(
         shrinkWrap: true,
