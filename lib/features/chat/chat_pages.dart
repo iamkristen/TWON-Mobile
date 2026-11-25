@@ -396,6 +396,7 @@ class ChatPage extends StatelessWidget {
       id,
       outbox: ChatOutbox.shared,
       account: d.read<AuthCubit>().userId,
+      signedInAs: () => d.read<AuthCubit>().userId,
     ),
     child: ChatBody(id, conversation),
   );

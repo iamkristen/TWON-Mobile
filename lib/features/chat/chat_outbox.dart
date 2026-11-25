@@ -293,6 +293,18 @@ class ChatOutbox {
     _settle(id, const AppFailure('Discarded'));
   }
 
+  /// Another account signed in on this device: only its own messages are kept.
+  Future<void> keepOnly(String account) async {
+    await load();
+    final others = _items.where((i) => i.account != account).toList();
+    if (others.isEmpty) return;
+    _items.removeWhere((i) => i.account != account);
+    for (final i in others) {
+      _settle(i.clientMessageId, const AppFailure('Signed in as someone else'));
+    }
+    await _save();
+  }
+
   /// Sign-out: nothing typed by one account is left for the next person.
   Future<void> clear() async {
     _items.clear();

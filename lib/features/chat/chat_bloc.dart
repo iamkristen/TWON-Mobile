@@ -137,6 +137,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     this.id, {
     ChatOutbox? outbox,
     this.account = 'me',
+    this.signedInAs,
   }) : outbox = outbox ?? ChatOutbox(MemoryOutboxStore()),
        super(const ChatState()) {
     on<ChatLiveChanged>((event, emit) {
@@ -260,6 +261,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   static Duration typingTtl = const Duration(seconds: 6);
   final ChatOutbox outbox;
   final String account;
+  final String Function()? signedInAs;
   late final StreamSubscription<void> _outboxChanges;
   final _typing = <String, DateTime>{};
   Json _receipts = const {};
@@ -268,6 +270,13 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
 
   /// A queued message sent later appears like a pushed one (once, by its id).
   Future<dynamic> _post(String conversationId, Json body) async {
+    // CHAT-5: a message queued by one account is never sent with another's session.
+    if (signedInAs != null && signedInAs!() != account) {
+      throw const AppFailure(
+        'Signed in as someone else',
+        code: 'ACCOUNT_CHANGED',
+      );
+    }
     final sent = await repository.request(
       'conversations/$conversationId/messages',
       method: 'POST',

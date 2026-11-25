@@ -42,6 +42,8 @@ class AuthCubit extends Cubit<AuthState> {
           user: asJson(api.session!['user']),
         ),
       );
+      final account = entityId(api.session!['user']);
+      if (account.isNotEmpty) await ChatOutbox.shared.keepOnly(account);
       await refreshProfile();
     } catch (error) {
       emit(AuthState(status: AuthStatus.signedOut, error: error.toString()));
@@ -137,6 +139,8 @@ class AuthCubit extends Cubit<AuthState> {
     emit(
       AuthState(status: AuthStatus.authenticated, user: asJson(result['user'])),
     );
+    // CHAT-5: another account's waiting messages are not kept on this device.
+    await ChatOutbox.shared.keepOnly(entityId(result['user']));
     await refreshProfile();
   }
 

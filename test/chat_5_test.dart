@@ -120,6 +120,44 @@ void main() {
     });
 
     test(
+      'another account signing in drops the other queues; a queued message is never sent as someone else',
+      () async {
+        final api = Api()..online = false;
+        final box = ChatOutbox(MemoryOutboxStore());
+        await box.send('alice', 'c1', {'body': 'from alice'}, poster(api));
+        await box.send('bob', 'c1', {'body': 'from bob'}, poster(api));
+        await box.keepOnly('bob');
+        expect(box.items('alice'), isEmpty);
+        expect(box.items('bob'), hasLength(1));
+        // A chat opened by alice whose session is now bob's sends nothing.
+        api.online = true;
+        final harness = Harness();
+        final realtime = RealtimeService(harness.api);
+        var current = 'alice';
+        final bloc = ChatBloc(
+          api,
+          realtime,
+          'c1',
+          outbox: box,
+          account: 'alice',
+          signedInAs: () => current,
+        );
+        await bloc.stream.firstWhere((s) => !s.loading);
+        current = 'bob';
+        final before = bloc.state.sent;
+        bloc.add(ChatSend({'body': 'typed as alice'}));
+        await bloc.stream.firstWhere((s) => s.sent > before);
+        expect(api.bodies.where((b) => b['body'] == 'typed as alice'), isEmpty);
+        expect(box.items('alice').single.state, OutboxState.queued);
+        await bloc.close();
+        await realtime.dispose();
+        harness.api.dio.close();
+        await harness.api.expired.close();
+        await harness.api.tokensChanged.close();
+      },
+    );
+
+    test(
       'the open chat shows the queued message and sends it when the socket reconnects',
       () async {
         final api = Api()..online = false;
