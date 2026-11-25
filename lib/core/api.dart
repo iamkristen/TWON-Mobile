@@ -300,7 +300,9 @@ class DioRepository implements AppRepository {
     CancelToken? cancel,
   }) async {
     final name = fileName ?? path.split(RegExp(r'[/\\]')).last;
-    final type = endpoint == 'media/upload'
+    // CHAT-3: chat files are stored privately in both flows.
+    final chat = endpoint == 'media/upload?purpose=chat';
+    final type = endpoint == 'media/upload' || chat
         ? _directTypes[name.split('.').last.toLowerCase()]
         : null;
     final unavailable = _directUnavailableUntil;
@@ -326,6 +328,7 @@ class DioRepository implements AppRepository {
               'size': size,
               'contentType': type.$2,
               'fileName': name.length > 255 ? name.substring(0, 255) : name,
+              if (chat) 'purpose': 'chat',
             },
             cancel: cancel,
           ),

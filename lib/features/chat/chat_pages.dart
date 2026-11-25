@@ -21,6 +21,7 @@ import '../account/account_pages.dart';
 import 'chat_bloc.dart';
 import 'message_actions.dart';
 import 'group_membership.dart';
+import 'chat_media.dart';
 import 'chat_safety.dart';
 
 class ConversationsPage extends StatelessWidget {
@@ -444,7 +445,10 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
       }
       if (path == null || !mounted) return;
       setState(() => uploading = true);
-      final data = await repository(context).upload(path);
+      final data = await repository(context).upload(
+        path,
+        endpoint: chatUploadEndpoint,
+      );
       if (mounted) {
         setState(() {
           attachment = data['url'];
@@ -484,7 +488,10 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
       if (mounted) setState(() => recording = false);
       if (path == null || !mounted) return;
       setState(() => uploading = true);
-      final data = await repository(context).upload(path);
+      final data = await repository(context).upload(
+        path,
+        endpoint: chatUploadEndpoint,
+      );
       await File(path).delete().catchError((_) => File(path));
       if (mounted) setState(() => attachment = data['url']);
     } catch (error) {
@@ -1163,6 +1170,22 @@ class _MessageAttachmentState extends State<MessageAttachment> {
     super.dispose();
   }
 
+  /// CHAT-3: a fresh link for each opening; null after telling the member.
+  Future<String?> resolve() async {
+    final link = await ChatMediaLinks.of(context).link(widget.url);
+    if (link == null && mounted) notice(context, 'This file is unavailable.');
+    return link;
+  }
+
+  Future<void> open() async {
+    try {
+      final link = await resolve();
+      if (link != null) await openUrl(link);
+    } catch (error) {
+      if (mounted) notice(context, 'Could not open this file.');
+    }
+  }
+
   @override
   Widget build(BuildContext c) {
     final kind = chatAttachmentKind(widget.url, widget.kind);
@@ -1173,7 +1196,9 @@ class _MessageAttachmentState extends State<MessageAttachment> {
             if (playing) {
               await player.pause();
             } else {
-              await player.play(UrlSource(widget.url));
+              final link = await resolve();
+              if (link == null) return;
+              await player.play(UrlSource(link));
             }
             if (mounted) setState(() => playing = !playing);
           } catch (error) {
@@ -1184,17 +1209,19 @@ class _MessageAttachmentState extends State<MessageAttachment> {
         label: const Text('Voice message'),
       );
     }
+    final preview = widget.thumbnail.isNotEmpty
+        ? widget.thumbnail
+        : widget.url;
     if (kind == 'image' || kind == 'gif' || widget.thumbnail.isNotEmpty) {
       return InkWell(
-        onTap: () => openUrl(widget.url),
-        child: BrandImage(
-          widget.thumbnail.isNotEmpty ? widget.thumbnail : widget.url,
-          height: 170,
-        ),
+        onTap: open,
+        child: isPrivateChatMedia(preview)
+            ? PrivateChatImage(preview)
+            : BrandImage(preview, height: 170),
       );
     }
     return TextButton.icon(
-      onPressed: () => openUrl(widget.url),
+      onPressed: open,
       icon: const Icon(Icons.attach_file),
       label: const Text('Open attachment'),
     );
