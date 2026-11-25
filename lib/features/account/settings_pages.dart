@@ -101,6 +101,7 @@ class PreferencesPage extends StatelessWidget {
       final prefs = user.object('preferences');
       final n = asJson(prefs['notifications']), p = asJson(prefs['privacy']);
       final ranking = asJson(prefs['ranking']);
+      final quiet = asJson(n['quietHours']);
       return FeatureForm(
         title: 'Notifications & privacy',
 
@@ -122,6 +123,61 @@ class PreferencesPage extends StatelessWidget {
             'Messages',
             kind: FieldKind.toggle,
             initial: n['messages'] ?? true,
+          ),
+          // CHAT-5: push for messages. A notification never shows message text.
+          FieldSpec(
+            'push',
+            'Push notifications for messages',
+            kind: FieldKind.toggle,
+            initial: n['push'] ?? true,
+          ),
+          FieldSpec(
+            'pushPreview',
+            'What a notification shows',
+            kind: FieldKind.select,
+            options: const ['generic', 'sender'],
+            initial: n['pushPreview'] ?? 'generic',
+            hint: 'generic: only "New message". sender: who it is from.',
+          ),
+          FieldSpec(
+            'quietEnabled',
+            'Quiet hours',
+            kind: FieldKind.toggle,
+            initial: quiet['enabled'] == true,
+          ),
+          FieldSpec(
+            'quietStart',
+            'Quiet from (HH:MM)',
+            initial: quiet['start'] ?? '22:00',
+            maxLength: 5,
+          ),
+          FieldSpec(
+            'quietEnd',
+            'Quiet until (HH:MM)',
+            initial: quiet['end'] ?? '07:00',
+            maxLength: 5,
+          ),
+          FieldSpec(
+            'quietZone',
+            'Time zone',
+            initial: quiet['timezone'] ?? 'Asia/Kathmandu',
+            maxLength: 64,
+            hint: 'For example Asia/Kathmandu or Europe/London.',
+          ),
+          FieldSpec(
+            'showOnline',
+            'Show that I am online (direct messages)',
+            kind: FieldKind.select,
+            options: const ['nobody', 'following', 'everyone'],
+            initial: p['showOnline'] ?? 'nobody',
+            hint:
+                'Off unless you choose; you only see others\' if you share yours.',
+          ),
+          FieldSpec(
+            'showTyping',
+            'Show when I am typing',
+            kind: FieldKind.toggle,
+            initial: p['showTyping'] == true,
           ),
           FieldSpec(
             'showLocation',
@@ -159,10 +215,20 @@ class PreferencesPage extends StatelessWidget {
                 'inApp': v['inApp'],
                 'mentions': v['mentions'],
                 'messages': v['messages'],
+                'push': v['push'],
+                'pushPreview': v['pushPreview'],
+                'quietHours': {
+                  'enabled': v['quietEnabled'] == true,
+                  'start': '${v['quietStart']}'.trim(),
+                  'end': '${v['quietEnd']}'.trim(),
+                  'timezone': '${v['quietZone']}'.trim(),
+                },
               },
               'privacy': {
                 'showLocation': v['showLocation'],
                 'whoCanMessage': v['whoCanMessage'],
+                'showOnline': v['showOnline'],
+                'showTyping': v['showTyping'],
               },
               'ranking': {'public': v['rankingPublic'] == true},
             },

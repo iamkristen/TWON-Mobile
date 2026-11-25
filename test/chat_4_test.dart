@@ -4,6 +4,7 @@ import 'package:twon_mobile/core/api.dart';
 import 'package:twon_mobile/core/models.dart';
 import 'package:twon_mobile/core/realtime.dart';
 import 'package:twon_mobile/features/chat/chat_bloc.dart';
+import 'package:twon_mobile/features/chat/chat_outbox.dart';
 import 'social_experience_test.dart' show Harness;
 
 /// CHAT-4: a message is sent once however often it is retried; a long
@@ -47,7 +48,8 @@ const offline = AppFailure('Cannot reach TWON.');
 Entity message(int n) => Entity({
   '_id': 'm$n',
   'body': '$n',
-  'createdAt': '2026-11-25T00:${(n ~/ 60).toString().padLeft(2, '0')}:${(n % 60).toString().padLeft(2, '0')}Z',
+  'createdAt':
+      '2026-11-25T00:${(n ~/ 60).toString().padLeft(2, '0')}:${(n % 60).toString().padLeft(2, '0')}Z',
 });
 
 void main() {
@@ -61,7 +63,6 @@ void main() {
   }
 
   setUp(() {
-    ChatBloc.sendRetryDelays = const [Duration.zero, Duration.zero];
     api = Api();
     harness = Harness();
     realtime = RealtimeService(harness.api);
@@ -73,73 +74,120 @@ void main() {
     await harness.api.expired.close();
     await harness.api.tokensChanged.close();
   });
+  // CHAT-5: outbox changes also publish states; wait for this send's answer.
   Future<ChatState> send(Json body) {
-    final done = bloc.stream.firstWhere((s) => !s.sending);
+    final before = bloc.state.sent;
+    final done = bloc.stream.firstWhere((s) => s.sent > before);
     bloc.add(ChatSend(body));
     return done;
   }
 
+  // CHAT-5: sends go through the persistent outbox. An unknown outcome is no
+  // longer retried twice and then dropped: the message waits (same id) and is
+  // retried until stored or refused.
   test('a lost answer is retried under the same id, and shown once', () async {
     await start();
-    api.failures.addAll([
-      offline,
-      const AppFailure('busy', status: 503),
-    ]);
-    final state = await send({'body': 'hi'});
+    api.failures.addAll([offline, const AppFailure('busy', status: 503)]);
+    final queued = await send({'body': 'hi'});
+    expect([queued.pending.length, queued.messages.length], [1, 0]);
+    await bloc.outbox.wake(
+      'me',
+      (c, b) =>
+          api.request('conversations/$c/messages', method: 'POST', body: b),
+    );
+    await bloc.outbox.wake(
+      'me',
+      (c, b) =>
+          api.request('conversations/$c/messages', method: 'POST', body: b),
+    );
     expect(api.sent, hasLength(3));
     expect(api.sent.map((b) => b['clientMessageId']).toSet(), hasLength(1));
     expect(
       api.sent.first['clientMessageId'],
       matches(RegExp(r'^[A-Za-z0-9-]{16,64}$')),
     );
-    expect([state.error, state.sent, state.messages.length], [null, 1, 1]);
+    expect(bloc.outbox.items('me'), isEmpty);
   });
 
-  test('sending again after giving up is the same message; another text is not', () async {
-    await start();
-    api.failures.addAll([offline, offline, offline]);
-    expect((await send({'body': 'hi'})).error, isNotNull);
-    expect(api.sent, hasLength(3));
-    await send({'body': 'hi'});
-    expect(api.sent.map((b) => b['clientMessageId']).toSet(), hasLength(1));
-    await send({'body': 'hi'}); // sent: the same words again are a new message
-    await send({'body': 'other'});
-    expect(api.sent.map((b) => b['clientMessageId']).toSet(), hasLength(3));
-  });
+  test(
+    'a waiting message keeps its id; the same words sent again are a new message',
+    () async {
+      await start();
+      api.failures.addAll([offline, offline]);
+      await send({'body': 'hi'});
+      await bloc.outbox.wake(
+        'me',
+        (c, b) =>
+            api.request('conversations/$c/messages', method: 'POST', body: b),
+      );
+      await bloc.outbox.wake(
+        'me',
+        (c, b) =>
+            api.request('conversations/$c/messages', method: 'POST', body: b),
+      );
+      expect(api.sent.map((b) => b['clientMessageId']).toSet(), hasLength(1));
+      await send({
+        'body': 'hi',
+      }); // sent: the same words again are a new message
+      await send({'body': 'other'});
+      expect(api.sent.map((b) => b['clientMessageId']).toSet(), hasLength(3));
+    },
+  );
 
-  test('an answer is never retried', () async {
-    await start();
-    for (final status in [400, 401, 403, 404, 409, 429, 500]) {
-      api.sent.clear();
-      api.failures.add(AppFailure('no', status: status));
-      expect((await send({'body': 'r$status'})).error, 'no');
-      expect(api.sent, hasLength(1), reason: '$status');
-    }
-    api.sent.clear();
-    api.failures.add(
-      const AppFailure('wait', status: 409, code: 'MESSAGE_IN_PROGRESS'),
-    );
-    expect((await send({'body': 'p'})).error, isNull);
-    expect(api.sent, hasLength(2));
-  });
+  test(
+    'an answer is never retried; rate limits and an attempt in progress are',
+    () async {
+      await start();
+      for (final status in [400, 401, 403, 404, 409, 500]) {
+        api.sent.clear();
+        api.failures.add(AppFailure('no', status: status));
+        expect((await send({'body': 'r$status'})).error, 'no');
+        expect(api.sent, hasLength(1), reason: '$status');
+        final failed = bloc.outbox.items('me').single;
+        expect([failed.state, failed.error], [OutboxState.failed, 'no']);
+        await bloc.discardPending(failed.clientMessageId);
+      }
+      for (final failure in [
+        const AppFailure('wait', status: 409, code: 'MESSAGE_IN_PROGRESS'),
+        const AppFailure('slow down', status: 429),
+      ]) {
+        api.sent.clear();
+        api.failures.add(failure);
+        expect(
+          (await send({'body': 'p${failure.status}'})).pending,
+          hasLength(1),
+        );
+        await bloc.outbox.wake(
+          'me',
+          (c, b) =>
+              api.request('conversations/$c/messages', method: 'POST', body: b),
+        );
+        expect(api.sent, hasLength(2));
+        expect(bloc.outbox.items('me'), isEmpty);
+      }
+    },
+  );
 
-  test('after a long interruption the list restarts at the newest page, with no hidden gap', () async {
-    api.pages = [
-      ApiPage([for (var n = 30; n > 0; n--) message(n)], null),
-      ApiPage([for (var n = 200; n > 170; n--) message(n)], 'older'),
-      ApiPage([for (var n = 170; n > 140; n--) message(n)], 'older2'),
-    ];
-    await start();
-    expect(bloc.state.messages, hasLength(30));
-    realtime.events.add(const RealtimeEvent('connect', {}));
-    await bloc.stream.firstWhere((s) => s.messages.first.id == 'm200');
-    expect(bloc.state.messages, hasLength(30));
-    expect(bloc.state.cursor, 'older');
-    bloc.add(ChatLoad(older: true)); // the missed messages can be loaded
-    await bloc.stream.firstWhere((s) => s.messages.length == 60);
-    expect(api.queries.last!['cursor'], 'older');
-    expect(bloc.state.messages.last.id, 'm141');
-  });
+  test(
+    'after a long interruption the list restarts at the newest page, with no hidden gap',
+    () async {
+      api.pages = [
+        ApiPage([for (var n = 30; n > 0; n--) message(n)], null),
+        ApiPage([for (var n = 200; n > 170; n--) message(n)], 'older'),
+        ApiPage([for (var n = 170; n > 140; n--) message(n)], 'older2'),
+      ];
+      await start();
+      expect(bloc.state.messages, hasLength(30));
+      realtime.events.add(const RealtimeEvent('connect', {}));
+      await bloc.stream.firstWhere((s) => s.messages.first.id == 'm200');
+      expect(bloc.state.messages, hasLength(30));
+      expect(bloc.state.cursor, 'older');
+      bloc.add(ChatLoad(older: true)); // the missed messages can be loaded
+      await bloc.stream.firstWhere((s) => s.messages.length == 60);
+      expect(api.queries.last!['cursor'], 'older');
+      expect(bloc.state.messages.last.id, 'm141');
+    },
+  );
 
   test('a short interruption keeps what is loaded', () async {
     api.pages = [

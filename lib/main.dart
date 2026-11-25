@@ -5,6 +5,7 @@ import 'core/responsive_media.dart';
 import 'core/env_config.dart';
 import 'core/token_store.dart';
 import 'app.dart';
+import 'features/chat/chat_outbox.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,6 +15,8 @@ Future<void> main() async {
     ..maximumSizeBytes = imageCacheMaxBytes;
   AppConfig.validate();
   final preferences = await SharedPreferences.getInstance();
+  // CHAT-5: unsent messages survive the app being closed (encrypted storage).
+  ChatOutbox.shared = ChatOutbox(SecureOutboxStore());
   final api = DioRepository(
     baseUrl: AppConfig.apiUrl,
     store: SecureSessionStore(),

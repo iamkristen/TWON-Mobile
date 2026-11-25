@@ -8,6 +8,7 @@ import 'core/api.dart';
 import 'core/models.dart';
 import 'core/theme.dart';
 import 'core/realtime.dart';
+import 'core/push.dart';
 import 'features/chat/chat_safety.dart';
 import 'features/auth/auth_cubit.dart';
 import 'features/auth/auth_pages.dart';
@@ -39,14 +40,27 @@ class _TwonAppState extends State<TwonApp> with WidgetsBindingObserver {
   StreamSubscription<AuthState>? engagementSession;
   String engagementUser = "";
   late final realtime = RealtimeService(widget.api);
+  // CHAT-5: device token lifecycle (the platform token source needs the owner's Firebase setup).
+  late final push = PushRegistration(widget.api, NoPushTokens());
+  String pushUser = '';
+  StreamSubscription<String>? pushOpened;
   late final refresh = _AuthRefresh(auth);
   late final router = _router(auth, refresh);
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    auth.beforeSignOut.add(push.stop);
+    // A tapped notification opens its chat (when a platform token source is configured).
+    pushOpened = push.openedChats.listen((id) => router.push('/messages/$id'));
     engagementSession = auth.stream.listen((state) {
       final user = entityId(state.user);
+      if (state.status == AuthStatus.authenticated && user != pushUser) {
+        pushUser = user;
+        unawaited(push.start());
+      } else if (state.status != AuthStatus.authenticated) {
+        pushUser = '';
+      }
       if (user != engagementUser) {
         engagementUser = user;
         engagement.reset();
@@ -71,6 +85,7 @@ class _TwonAppState extends State<TwonApp> with WidgetsBindingObserver {
     router.dispose();
     refresh.dispose();
     engagementSession?.cancel();
+    pushOpened?.cancel();
     engagement.close();
     auth.close();
     theme.close();
@@ -306,9 +321,8 @@ GoRouter _router(AuthCubit auth, Listenable refresh) {
           ),
           GoRoute(
             path: '/search',
-            builder: (_, state) => SearchPage(
-              initialQuery: state.uri.queryParameters['q'] ?? '',
-            ),
+            builder: (_, state) =>
+                SearchPage(initialQuery: state.uri.queryParameters['q'] ?? ''),
           ),
           GoRoute(
             path: '/notifications',

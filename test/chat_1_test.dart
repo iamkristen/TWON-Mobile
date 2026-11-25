@@ -127,9 +127,14 @@ void main() {
         await bloc.stream.firstWhere(
           (s) => s.messages.length == 2 && !s.loading,
         );
-        expect(api.calls, ['GET conversations/c1/messages']);
+        // CHAT-5: delivery/read positions are read once as well.
+        expect(api.calls, [
+          'GET conversations/c1/receipts',
+          'GET conversations/c1/messages',
+        ]);
         await Future<void>.delayed(const Duration(milliseconds: 1200));
         expect(api.calls, [
+          'GET conversations/c1/receipts',
           'GET conversations/c1/messages',
           'PATCH conversations/c1/read',
         ]);

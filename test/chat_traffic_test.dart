@@ -43,7 +43,8 @@ void main() {
     final api = ChatApi();
     final bloc = ChatBloc(api, realtime, 'c1');
     await bloc.stream.firstWhere((s) => s.messages.length == 1 && !s.loading);
-    expect(api.calls, ['GET conversations/c1/messages']); // no read PATCH after a load
+    // No read PATCH after a load (CHAT-5: delivery/read positions are read once).
+    expect(api.calls, ['GET conversations/c1/receipts', 'GET conversations/c1/messages']);
     for (var i = 0; i < 10; i++) {
       realtime.events.add(RealtimeEvent('chat:message', {
         'conversationId': 'c1',
@@ -57,13 +58,14 @@ void main() {
     await bloc.stream.firstWhere((s) => s.messages.length == 11);
     expect(bloc.state.messages.first.id, 'm9'); // newest first
     await Future<void>.delayed(const Duration(milliseconds: 1200));
-    expect(api.calls, ['GET conversations/c1/messages', 'PATCH conversations/c1/read']);
+    // One read receipt, and (CHAT-5) one delivery acknowledgement for the burst.
+    expect(api.calls.skip(2).toList()..sort(), ['PATCH conversations/c1/read', 'POST conversations/delivered']);
 
     realtime.events.add(const RealtimeEvent('chat:message_deleted', {'conversationId': 'c1', 'messageId': 'm3'}));
     await bloc.stream.firstWhere((s) => s.messages.length == 10);
     realtime.events.add(const RealtimeEvent('connect', {})); // reconnected: catch up once
     await Future<void>.delayed(const Duration(milliseconds: 50));
-    expect(api.calls.where((c) => c.startsWith('GET')), hasLength(2));
+    expect(api.calls.where((c) => c == 'GET conversations/c1/messages'), hasLength(2));
 
     await bloc.close();
     await realtime.dispose();

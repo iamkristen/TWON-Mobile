@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../chat/chat_outbox.dart';
 import '../../core/api.dart';
 import '../../core/models.dart';
 
@@ -139,7 +140,13 @@ class AuthCubit extends Cubit<AuthState> {
     await refreshProfile();
   }
 
+  /// CHAT-5: run while the session is still valid (push device removal).
+  final beforeSignOut = <Future<void> Function()>[];
+
   Future<void> logout() async {
+    for (final run in beforeSignOut) {
+      await run().catchError((_) {});
+    }
     try {
       await api.request(
         'auth/logout',
@@ -150,6 +157,8 @@ class AuthCubit extends Cubit<AuthState> {
       /* Local sign-out must always be possible. */
     }
     await api.clearSession();
+    // CHAT-5: nothing typed by this account stays queued on the device.
+    await ChatOutbox.shared.clear();
     emit(const AuthState(status: AuthStatus.signedOut));
   }
 

@@ -23,6 +23,8 @@ import 'message_actions.dart';
 import 'group_membership.dart';
 import 'chat_media.dart';
 import 'chat_safety.dart';
+import 'chat_live.dart';
+import 'chat_outbox.dart';
 
 class ConversationsPage extends StatelessWidget {
   const ConversationsPage({super.key});
@@ -141,6 +143,10 @@ class ConversationSearch extends SearchDelegate<void> {
     super.dispose();
   }
 
+  /// CHAT-5: chats beyond the loaded pages, found on the server.
+  Future<List<Entity>>? server;
+  String serverQuery = '';
+
   Future<List<Entity>> load() async {
     final api = repository(origin);
     final rows = <String, Entity>{};
@@ -183,6 +189,11 @@ class ConversationSearch extends SearchDelegate<void> {
         builder: (d, snapshot) {
           final needle = query.trim().toLowerCase();
           final me = origin.read<AuthCubit>().userId;
+          final q = query.trim();
+          if (q.length >= 2 && q != serverQuery) {
+            serverQuery = q;
+            server = searchChatsOnServer(repository(origin), q);
+          }
           final rows = (snapshot.data ?? [])
               .where(
                 (row) => [
@@ -233,6 +244,37 @@ class ConversationSearch extends SearchDelegate<void> {
                       origin.push('/messages/${row.id}', extra: row.data);
                     },
                   ),
+                ),
+              if (server != null && q.length >= 2)
+                FutureBuilder<List<Entity>>(
+                  future: server,
+                  builder: (d, found) {
+                    final known = rows.map((r) => r.id).toSet();
+                    final more = (found.data ?? const <Entity>[])
+                        .where((r) => !known.contains(r.id))
+                        .toList();
+                    if (more.isEmpty) return const SizedBox.shrink();
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                          child: Text('More chats'),
+                        ),
+                        for (final row in more)
+                          ConversationTile(
+                            row: row,
+                            onTap: () {
+                              close(c, null);
+                              origin.push(
+                                '/messages/${row.id}',
+                                extra: row.data,
+                              );
+                            },
+                          ),
+                      ],
+                    );
+                  },
                 ),
             ],
           );
@@ -348,7 +390,13 @@ class ChatPage extends StatelessWidget {
   final Json conversation;
   @override
   Widget build(BuildContext c) => BlocProvider(
-    create: (d) => ChatBloc(repository(d), d.read<RealtimeService>(), id),
+    create: (d) => ChatBloc(
+      repository(d),
+      d.read<RealtimeService>(),
+      id,
+      outbox: ChatOutbox.shared,
+      account: d.read<AuthCubit>().userId,
+    ),
     child: ChatBody(id, conversation),
   );
 }
@@ -673,17 +721,36 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
-                  child: Text(
-                    conversation['name']?.toString().isNotEmpty == true
-                        ? '${conversation['name']}'
-                        : 'Pack conversation',
-                    style: Theme.of(c).textTheme.titleMedium,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        conversation['name']?.toString().isNotEmpty == true
+                            ? '${conversation['name']}'
+                            : 'Pack conversation',
+                        style: Theme.of(c).textTheme.titleMedium,
+                      ),
+                      // CHAT-5: typing (opt-in) or online (direct messages, opt-in).
+                      ChatStatusLine(
+                        id: widget.id,
+                        isDm: conversation['type'] == 'dm',
+                        typing: s.typing,
+                        names: {
+                          for (final p
+                              in (conversation['participants'] as List?) ??
+                                  const [])
+                            entityId(p):
+                                '${asJson(p)['fullName'] ?? 'Someone'}',
+                        },
+                      ),
+                    ],
                   ),
                 ),
               ),
               PopupMenuButton<String>(
                 tooltip: 'Chat options',
                 onSelected: (value) async {
+                  if (value == 'search') return openMessageSearch(c, widget.id);
                   if (value == 'moderation') {
                     await showClanModeration(c, widget.id, conversation);
                     return;
@@ -719,6 +786,10 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                   }
                 },
                 itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    value: 'search',
+                    child: Text('Search in chat'),
+                  ),
                   if (isManagedGroup(conversation))
                     const PopupMenuItem(
                       value: 'members',
@@ -946,18 +1017,25 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                                             padding: const EdgeInsets.only(
                                               left: 4,
                                             ),
-                                            child: Icon(
-                                              readByOthers(message, c.read<AuthCubit>().userId)
-                                                  ? Icons.done_all
-                                                  : Icons.done,
-                                              size: 15,
-                                              semanticLabel:
-                                                  readByOthers(message, c.read<AuthCubit>().userId)
-                                                  ? 'Read'
-                                                  : 'Sent',
-                                              color: readByOthers(message, c.read<AuthCubit>().userId)
-                                                  ? TwonPalette.moonBlue
-                                                  : null,
+                                            child: Builder(
+                                              builder: (_) {
+                                                // CHAT-5: Sent, Delivered or Read.
+                                                final status = ownStatus(
+                                                  message,
+                                                  c.read<AuthCubit>().userId,
+                                                  s.receipts,
+                                                );
+                                                return Icon(
+                                                  status == 'Sent'
+                                                      ? Icons.done
+                                                      : Icons.done_all,
+                                                  size: 15,
+                                                  semanticLabel: status,
+                                                  color: status == 'Read'
+                                                      ? TwonPalette.moonBlue
+                                                      : null,
+                                                );
+                                              },
                                             ),
                                           ),
                                         IconButton(
@@ -1031,6 +1109,9 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                 ),
               ),
             ),
+          // CHAT-5: messages waiting to be sent (also after the app was closed).
+          if (s.pending.isNotEmpty)
+            PendingMessages(items: s.pending, bloc: bloc),
           if (blocked)
             const Padding(
               padding: EdgeInsets.all(16),
@@ -1059,6 +1140,8 @@ class _ChatBodyState extends State<ChatBody> with WidgetsBindingObserver {
                       child: TextField(
                         controller: input,
                         focusNode: inputFocus,
+                        onChanged: (_) =>
+                            bloc.typed(), // CHAT-5 (opt-in on the server)
                         enabled: !recording,
                         maxLines: 4,
                         minLines: 1,

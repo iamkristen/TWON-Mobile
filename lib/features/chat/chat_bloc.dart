@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:bloc_concurrency/bloc_concurrency.dart';
 import '../../core/api.dart';
 import '../../core/models.dart';
 import '../../core/realtime.dart';
+import 'chat_outbox.dart';
 
 sealed class ChatEvent {}
 
@@ -63,6 +63,29 @@ bool isRetryableSend(Object error) =>
         (error.status == null && error.code != 'CANCELED') ||
         const [502, 503, 504].contains(error.status));
 
+/// CHAT-5: the outbox or a receipt changed.
+class ChatLiveChanged extends ChatEvent {}
+
+/// CHAT-5: own message status: delivered or read by someone else (DMs and groups).
+String ownStatus(Entity message, String? me, Json receipts) {
+  bool reached(dynamic r) {
+    final p = asJson(r);
+    if (p['userId'] == me) return false;
+    final at = '${p['at']}', created = message.text('createdAt');
+    return created.compareTo(at) < 0 ||
+        (created == at && message.id.compareTo('${p['upTo']}') <= 0);
+  }
+
+  if (readByOthers(message, me) ||
+      ((receipts['read'] as List?) ?? const []).any(reached)) {
+    return 'Read';
+  }
+  if (((receipts['delivered'] as List?) ?? const []).any(reached)) {
+    return 'Delivered';
+  }
+  return 'Sent';
+}
+
 class ChatState {
   const ChatState({
     this.messages = const [],
@@ -71,11 +94,19 @@ class ChatState {
     this.error,
     this.cursor,
     this.sent = 0,
+    this.pending = const [],
+    this.typing = const [],
+    this.receipts = const {},
   });
   final List<Entity> messages;
   final bool loading, sending;
   final String? error, cursor;
   final int sent;
+
+  /// CHAT-5: messages of this chat not sent yet, who is typing, receipt positions.
+  final List<OutboxItem> pending;
+  final List<String> typing;
+  final Json receipts;
   ChatState copy({
     List<Entity>? messages,
     bool? loading,
@@ -83,6 +114,9 @@ class ChatState {
     String? error,
     String? cursor,
     int? sent,
+    List<OutboxItem>? pending,
+    List<String>? typing,
+    Json? receipts,
   }) => ChatState(
     messages: messages ?? this.messages,
     loading: loading ?? this.loading,
@@ -90,11 +124,38 @@ class ChatState {
     error: error,
     cursor: cursor ?? this.cursor,
     sent: sent ?? this.sent,
+    pending: pending ?? this.pending,
+    typing: typing ?? this.typing,
+    receipts: receipts ?? this.receipts,
   );
 }
 
 class ChatBloc extends Bloc<ChatEvent, ChatState> {
-  ChatBloc(this.repository, this.realtime, this.id) : super(const ChatState()) {
+  ChatBloc(
+    this.repository,
+    this.realtime,
+    this.id, {
+    ChatOutbox? outbox,
+    this.account = 'me',
+  }) : outbox = outbox ?? ChatOutbox(MemoryOutboxStore()),
+       super(const ChatState()) {
+    on<ChatLiveChanged>((event, emit) {
+      final now = DateTime.now();
+      _typing.removeWhere((_, until) => until.isBefore(now));
+      emit(
+        state.copy(
+          pending: this.outbox.items(account, id),
+          typing: _typing.keys.toList(),
+          receipts: _receipts,
+        ),
+      );
+    });
+    _outboxChanges = this.outbox.changes.stream.listen(
+      (_) => isClosed ? null : add(ChatLiveChanged()),
+    );
+    unawaited(
+      this.outbox.load().then((_) => isClosed ? null : add(ChatLiveChanged())),
+    );
     on<ChatPatch>((event, emit) {
       emit(
         state.copy(
@@ -142,15 +203,37 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       if (event.name == 'connect') {
         // Catch up on events missed while disconnected.
         if (_loaded) add(ChatLoad());
+        unawaited(this.outbox.wake(account, _post)); // CHAT-5
         return;
       }
       if (event.payload['conversationId'] != id) return;
+      // CHAT-5: typing (opt-in on the server; expires here) and receipts.
+      if (event.name == 'chat:typing') {
+        final who = '${event.payload['userId']}';
+        if (event.payload['typing'] == true) {
+          _typing[who] = DateTime.now().add(typingTtl);
+          Timer(typingTtl + const Duration(milliseconds: 50), () {
+            if (!isClosed) add(ChatLiveChanged());
+          });
+        } else {
+          _typing.remove(who);
+        }
+        add(ChatLiveChanged());
+        return;
+      }
+      if (event.name == 'chat:delivered') {
+        _loadReceipts();
+        return;
+      }
       final message = event.payload['message'];
       switch (event.name) {
         case 'chat:message' when message is Map:
           final incoming = withSender(asJson(message));
           add(ChatIncoming(incoming));
           _scheduleRead(incoming.id);
+          final from = entityId(incoming.data['senderId']);
+          if (_typing.remove(from) != null) add(ChatLiveChanged());
+          if (from != account) _scheduleDelivered(incoming.id);
         case 'chat:message_updated' when message is Map:
           add(ChatPatch(Entity(asJson(message))));
         case 'chat:message_deleted' when event.payload['messageId'] is String:
@@ -158,6 +241,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         // CHAT-1: joined, left or removed: reload (a removed member gets a 403).
         case 'chat:conversation_changed':
           add(ChatLoad());
+        case 'chat:read':
+          _loadReceipts();
         default:
           _scheduleReload(); // reactions and unknown shapes: one reload per burst
       }
@@ -165,9 +250,106 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     // Fallback only: while the socket is down, poll every 15 s.
     _poll = Timer.periodic(const Duration(seconds: 15), (_) {
       if (active && !realtime.connected) add(ChatLoad());
+      // CHAT-5: messages waiting for the connection are tried again.
+      if (this.outbox.due) unawaited(this.outbox.flush(account, _post));
     });
     add(ChatLoad());
+    _loadReceipts();
   }
+
+  static Duration typingTtl = const Duration(seconds: 6);
+  final ChatOutbox outbox;
+  final String account;
+  late final StreamSubscription<void> _outboxChanges;
+  final _typing = <String, DateTime>{};
+  Json _receipts = const {};
+  Timer? _deliveredTimer;
+  String? _deliveredUpTo;
+
+  /// A queued message sent later appears like a pushed one (once, by its id).
+  Future<dynamic> _post(String conversationId, Json body) async {
+    final sent = await repository.request(
+      'conversations/$conversationId/messages',
+      method: 'POST',
+      body: body,
+    );
+    if (!isClosed && conversationId == id && sent is Map) {
+      add(ChatIncoming(withSender(asJson(sent))));
+    }
+    return sent;
+  }
+
+  Future<void> _loadReceipts() async {
+    try {
+      _receipts = asJson(
+        await repository.request('conversations/$id/receipts'),
+      );
+      if (!isClosed) add(ChatLiveChanged());
+    } catch (_) {
+      /* Receipts are optional (older servers, clans). */
+    }
+  }
+
+  /// CHAT-5: this device received messages (one acknowledgement per burst).
+  void _scheduleDelivered(String upTo) {
+    _deliveredUpTo = upTo;
+    _deliveredTimer ??= Timer(const Duration(seconds: 1), () {
+      _deliveredTimer = null;
+      final position = _deliveredUpTo;
+      _deliveredUpTo = null;
+      if (position == null) return;
+      repository
+          .request(
+            'conversations/delivered',
+            method: 'POST',
+            body: {
+              'items': [
+                {'conversationId': id, 'upTo': position},
+              ],
+            },
+          )
+          .catchError((_) => null);
+    });
+  }
+
+  /// CHAT-5: at most every 4 s while typing, and once when stopping (opt-in on the server).
+  DateTime? _typedAt;
+  Timer? _typingStop;
+  void typed() {
+    _typingStop?.cancel();
+    _typingStop = Timer(const Duration(seconds: 5), stoppedTyping);
+    final now = DateTime.now();
+    if (_typedAt != null &&
+        now.difference(_typedAt!) < const Duration(seconds: 4)) {
+      return;
+    }
+    _typedAt = now;
+    repository
+        .request(
+          'conversations/$id/typing',
+          method: 'POST',
+          body: {'typing': true},
+        )
+        .catchError((_) => null);
+  }
+
+  void stoppedTyping() {
+    _typingStop?.cancel();
+    if (_typedAt == null) return;
+    _typedAt = null;
+    repository
+        .request(
+          'conversations/$id/typing',
+          method: 'POST',
+          body: {'typing': false},
+        )
+        .catchError((_) => null);
+  }
+
+  Future<void> retryPending(String clientMessageId) =>
+      outbox.retry(account, clientMessageId, _post);
+  Future<void> discardPending(String clientMessageId) =>
+      outbox.discard(clientMessageId);
 
   Timer? _readTimer;
   Timer? _reloadTimer;
@@ -261,62 +443,38 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     }
   }
 
+  /// CHAT-5: through the persistent outbox: sent now, or kept until the
+  /// connection is back (also after the app is closed). The input is cleared
+  /// either way; a refusal is shown on the message itself.
   Future<void> _send(ChatSend event, Emitter<ChatState> emit) async {
     emit(state.copy(sending: true));
+    stoppedTyping();
     try {
-      final row = Entity(asJson(await _sendOnce(event.body)));
+      final result = await outbox.send(account, id, event.body, _post);
       if (emit.isDone) return;
+      final row = result.queued ? null : Entity(asJson(result.message));
       emit(
         state.copy(
-          messages: [row, ...state.messages.where((m) => m.id != row.id)],
+          messages: row == null
+              ? state.messages
+              : [row, ...state.messages.where((m) => m.id != row.id)],
           sending: false,
           sent: state.sent + 1,
+          pending: outbox.items(account, id),
+          error: result.queued
+              ? 'Waiting for connection. It will be sent automatically.'
+              : null,
         ),
       );
     } catch (error) {
       if (!emit.isDone) {
-        emit(state.copy(sending: false, error: error.toString()));
-      }
-    }
-  }
-
-  /// Delays before retrying a send whose outcome is unknown.
-  static List<Duration> sendRetryDelays = const [
-    Duration(seconds: 1),
-    Duration(seconds: 3),
-  ];
-
-  /// Ids of sends that failed, by content: sending the same again is the same message.
-  final _failedSends = <String, String>{};
-
-  Future<dynamic> _sendOnce(Json body) async {
-    final key = jsonEncode(body);
-    final clientMessageId = _failedSends[key] ?? newClientMessageId();
-    for (var attempt = 0; ; attempt++) {
-      try {
-        final result = await repository.request(
-          'conversations/$id/messages',
-          method: 'POST',
-          body: {...body, 'clientMessageId': clientMessageId},
+        emit(
+          state.copy(
+            sending: false,
+            sent: state.sent + 1,
+            error: error.toString(),
+          ),
         );
-        _failedSends.remove(key);
-        return result;
-      } catch (error) {
-        final retryable = isRetryableSend(error);
-        if (retryable && attempt < sendRetryDelays.length) {
-          await Future<void>.delayed(sendRetryDelays[attempt]);
-          if (!isClosed) continue;
-        }
-        // Refused for good: sending again is a new message.
-        if (retryable) {
-          _failedSends[key] = clientMessageId;
-          if (_failedSends.length > 50) {
-            _failedSends.remove(_failedSends.keys.first);
-          }
-        } else {
-          _failedSends.remove(key);
-        }
-        rethrow;
       }
     }
   }
@@ -324,9 +482,12 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   @override
   Future<void> close() async {
     _poll.cancel();
+    stoppedTyping();
+    _deliveredTimer?.cancel();
     _readTimer?.cancel();
     _reloadTimer?.cancel();
     await _socket.cancel();
+    await _outboxChanges.cancel();
     return super.close();
   }
 }

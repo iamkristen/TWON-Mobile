@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import 'api.dart';
@@ -62,6 +63,26 @@ class RealtimeService {
   /// Whether the socket is connected (Task 15: polling is only a fallback).
   bool get connected => socket?.connected ?? false;
   String? _usedToken;
+  String? _pass;
+
+  /// The pass only for the account it was issued to (its first part is the account id).
+  String? _passFor(Object? token) {
+    final pass = _pass;
+    if (pass == null || token is! String) return null;
+    final parts = token.split('.');
+    if (parts.length != 3) return null;
+    try {
+      final payload = asJson(
+        jsonDecode(
+          utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
+        ),
+      );
+      return payload['userId'] == pass.split('.').first ? pass : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Timer? _retry;
   Timer? _resync;
   int _attempt = 0;
@@ -78,6 +99,7 @@ class RealtimeService {
     socket = null;
     final token = api.session?['accessToken'];
     if (token == null) {
+      _pass = null; // another account must not use it
       // Signed out: the next sign-in starts a fresh cycle.
       _attempt = 0;
       _refreshedThisCycle = false;
@@ -92,6 +114,8 @@ class RealtimeService {
             _usedToken = api.session?['accessToken'] as String?;
             callback({'token': _usedToken ?? ''});
           })
+          // CHAT-5: the server's reconnection pass (admission lane per account, not a credential).
+          .setQuery({'pass': ?_passFor(token)})
           .disableAutoConnect()
           .enableForceNew()
           // Transport-level retries (network drops, per-IP refusals): 2–60 s with jitter.
@@ -143,6 +167,10 @@ class RealtimeService {
         },
       );
     });
+    created.on('realtime:pass', (value) {
+      final pass = value is Map ? value['pass'] : null;
+      if (pass is String && pass.length <= 128) _pass = pass;
+    });
     for (final name in [
       'chat:message',
       'chat:message_updated',
@@ -151,6 +179,9 @@ class RealtimeService {
       // CHAT-1: read positions (own devices, receipts) and membership changes.
       'chat:read',
       'chat:conversation_changed',
+      // CHAT-5: typing (opt-in) and delivery receipts.
+      'chat:typing',
+      'chat:delivered',
       'notification:new',
     ]) {
       socket!.on(
