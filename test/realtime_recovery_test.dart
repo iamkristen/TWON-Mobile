@@ -162,6 +162,11 @@ void main() {
     onRefresh = () => rotated('2');
     sockets.last.accept();
     sockets.last.serverDisconnect();
+    // The refresh and the rebuilt socket, without assuming they finish within 20 ms
+    // (they did not on a slow CI runner; everything below is still exact).
+    for (var i = 0; i < 100 && sockets.length < 2; i++) {
+      await settle();
+    }
     await settle();
     expect(refreshes, 1);
     expect(sockets, hasLength(2));
