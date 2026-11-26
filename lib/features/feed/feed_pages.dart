@@ -1957,6 +1957,9 @@ class _CommentsPaneState extends State<CommentsPane> {
                   children: [
                     Text(author['fullName']?.toString() ?? 'Pack member',
                       style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                    // POST-1: the anonymous author of an anonymous post (no name, no profile).
+                    if (author['isPostAuthor'] == true)
+                      Text('Author', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Theme.of(c).colorScheme.primary)),
                     Text(relativePostTime(row.text('createdAt')),
                       style: TextStyle(fontSize: 11, color: muted)),
                   ],
